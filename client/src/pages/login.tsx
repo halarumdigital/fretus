@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { loginSchema, type LoginCredentials } from "@shared/schema";
@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff, Lock, Mail, Loader2 } from "lucide-react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 
 interface LoginResponse {
   id: string;
@@ -26,19 +26,35 @@ export default function Login() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
+  const savedEmail = typeof window !== "undefined" ? localStorage.getItem("savedEmail") : null;
+  const shouldRemember = typeof window !== "undefined" ? localStorage.getItem("rememberMe") === "true" : false;
+
   const form = useForm<LoginCredentials>({
     resolver: zodResolver(loginSchema),
     defaultValues: {
-      email: "",
+      email: savedEmail || "",
       password: "",
     },
   });
 
+  useEffect(() => {
+    setRememberMe(shouldRemember);
+  }, [shouldRemember]);
+
   const loginMutation = useMutation<LoginResponse, Error, LoginCredentials>({
     mutationFn: async (credentials: LoginCredentials) => {
-      return await apiRequest("POST", "/api/auth/login", credentials);
+      const res = await apiRequest("POST", "/api/auth/login", credentials);
+      return await res.json();
     },
     onSuccess: async (data) => {
+      if (rememberMe) {
+        localStorage.setItem("rememberMe", "true");
+        localStorage.setItem("savedEmail", data.email);
+      } else {
+        localStorage.removeItem("rememberMe");
+        localStorage.removeItem("savedEmail");
+      }
+      
       await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       toast({
         title: "Login bem-sucedido!",
@@ -143,32 +159,30 @@ export default function Login() {
                       {form.formState.errors.password.message}
                     </p>
                   )}
-                  <div className="text-right mt-2">
-                    <button
-                      type="button"
-                      className="text-sm text-primary hover:underline underline-offset-4 transition-all"
-                      data-testid="link-forgot-password"
-                    >
-                      Esqueceu sua senha?
-                    </button>
-                  </div>
                 </div>
               </div>
 
-              <div className="flex items-center space-x-2">
-                <Checkbox 
-                  id="remember" 
-                  checked={rememberMe}
-                  onCheckedChange={(checked) => setRememberMe(checked === true)}
-                  data-testid="checkbox-remember"
-                  disabled={loginMutation.isPending}
-                />
-                <Label 
-                  htmlFor="remember" 
-                  className="text-sm font-normal cursor-pointer"
-                >
-                  Lembrar-me
-                </Label>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Checkbox 
+                    id="remember" 
+                    checked={rememberMe}
+                    onCheckedChange={(checked) => setRememberMe(checked === true)}
+                    data-testid="checkbox-remember"
+                    disabled={loginMutation.isPending}
+                  />
+                  <Label 
+                    htmlFor="remember" 
+                    className="text-sm font-normal cursor-pointer"
+                  >
+                    Lembrar-me
+                  </Label>
+                </div>
+                <Link href="/forgot-password">
+                  <span className="text-sm text-primary hover:underline underline-offset-4 transition-all cursor-pointer" data-testid="link-forgot-password">
+                    Esqueci minha senha
+                  </span>
+                </Link>
               </div>
 
               <Button
@@ -191,13 +205,11 @@ export default function Login() {
             <div className="mt-6 pt-6 border-t border-border">
               <p className="text-center text-sm text-muted-foreground">
                 Não tem uma conta?{" "}
-                <button
-                  type="button"
-                  className="text-primary font-medium hover:underline underline-offset-4 transition-all"
-                  data-testid="link-signup"
-                >
-                  Cadastre-se
-                </button>
+                <Link href="/register">
+                  <span className="text-primary font-medium hover:underline underline-offset-4 transition-all cursor-pointer" data-testid="link-signup">
+                    Cadastre-se
+                  </span>
+                </Link>
               </p>
             </div>
           </CardContent>

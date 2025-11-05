@@ -98,6 +98,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const { nome, email, password } = req.body;
+
+      if (!nome || !email || !password) {
+        return res.status(400).json({ 
+          message: "Todos os campos são obrigatórios" 
+        });
+      }
+
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(400).json({ 
+          message: "Este email já está em uso" 
+        });
+      }
+
+      const user = await storage.createUser({
+        nome,
+        email,
+        password,
+        isAdmin: false,
+      });
+
+      req.session.userId = user.id;
+      req.session.userEmail = user.email;
+      req.session.userName = user.nome;
+      req.session.isAdmin = user.isAdmin;
+
+      return res.json({
+        id: user.id,
+        email: user.email,
+        nome: user.nome,
+        isAdmin: user.isAdmin,
+      });
+    } catch (error) {
+      console.error("Erro no registro:", error);
+      return res.status(500).json({ 
+        message: "Erro interno do servidor" 
+      });
+    }
+  });
+
+  app.get("/api/users", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const users = await storage.getAllUsers();
+      return res.json(users);
+    } catch (error) {
+      console.error("Erro ao listar usuários:", error);
+      return res.status(500).json({ 
+        message: "Erro ao buscar usuários" 
+      });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;
