@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { loginSchema, type LoginCredentials } from "@shared/schema";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,11 +11,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff, Lock, Mail, Loader2 } from "lucide-react";
+import { useLocation } from "wouter";
 
 export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
 
   const form = useForm<LoginCredentials>({
     resolver: zodResolver(loginSchema),
@@ -29,12 +31,13 @@ export default function Login() {
     mutationFn: async (credentials: LoginCredentials) => {
       return await apiRequest("POST", "/api/auth/login", credentials);
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
       toast({
         title: "Login bem-sucedido!",
-        description: `Bem-vindo de volta, ${data.email}`,
+        description: `Bem-vindo de volta, ${data.nome}`,
       });
-      form.reset();
+      setLocation("/dashboard");
     },
     onError: (error: Error) => {
       toast({
