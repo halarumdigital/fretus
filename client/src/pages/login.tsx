@@ -13,6 +13,13 @@ import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff, Lock, Mail, Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 
+interface LoginResponse {
+  id: string;
+  email: string;
+  nome: string;
+  isAdmin: boolean;
+}
+
 export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
@@ -27,7 +34,7 @@ export default function Login() {
     },
   });
 
-  const loginMutation = useMutation({
+  const loginMutation = useMutation<LoginResponse, Error, LoginCredentials>({
     mutationFn: async (credentials: LoginCredentials) => {
       return await apiRequest("POST", "/api/auth/login", credentials);
     },
