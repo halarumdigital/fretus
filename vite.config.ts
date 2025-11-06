@@ -32,6 +32,16 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    proxy: {
+      "/api": {
+        target: "http://localhost:5010",
+        changeOrigin: true,
+      },
+      "/uploads": {
+        target: "http://localhost:5010",
+        changeOrigin: true,
+      },
+    },
     fs: {
       strict: true,
       deny: ["**/.*"],

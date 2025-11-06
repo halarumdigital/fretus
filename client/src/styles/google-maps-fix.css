@@ -1,0 +1,48 @@
+/* Fix para o Google Places Autocomplete dentro de Dialogs */
+.pac-container {
+  z-index: 99999 !important;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  border-radius: 0.5rem;
+  border: 1px solid hsl(var(--border));
+  background-color: hsl(var(--background));
+  margin-top: 4px;
+  pointer-events: auto !important;
+}
+
+.pac-item {
+  padding: 8px 12px;
+  cursor: pointer !important;
+  color: hsl(var(--foreground));
+  border-top: 1px solid hsl(var(--border));
+  font-family: inherit;
+  font-size: 0.875rem;
+  pointer-events: auto !important;
+}
+
+.pac-item:first-child {
+  border-top: none;
+}
+
+.pac-item:hover {
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.pac-item-query {
+  color: inherit;
+  font-weight: 500;
+}
+
+.pac-matched {
+  font-weight: 600;
+}
+
+.pac-icon {
+  margin-right: 8px;
+}
+
+/* Ensure autocomplete works inside dialogs */
+.pac-container:after {
+  background-image: none !important;
+  height: 0px;
+}

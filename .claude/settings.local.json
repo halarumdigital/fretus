@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run db:push:*)",
+      "Bash(npm run db:seed:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run db:list-users:*)",
+      "Bash(npm run db:check:*)",
+      "Bash(set DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev)",
+      "Bash(npx cross-env:*)",
+      "Bash(del serverdelete-admin.ts servercheck-password.ts)",
+      "Bash(npm run db:seed:complete:*)",
+      "Bash(npm run check:*)",
+      "Bash(del /f \"f:\\fretus\\server\\routes\\settings.ts\")",
+      "Bash(npx tsx:*)",
+      "Bash(del servercheck-table.ts)",
+      "Bash(del servercheck-zones.ts)",
+      "Bash(del \"f:\\fretus\\client\\src\\pages\\zonas.tsx\")",
+      "Bash(npm run dev:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill /F /PID 31212)",
+      "Bash(taskkill //F //PID 31212)",
+      "Bash(timeout /t 3 /nobreak)",
+      "Bash(curl:*)",
+      "Bash(taskkill:*)",
+      "Bash(nul)",
+      "Bash(timeout /t 2 /nobreak)",
+      "Bash(del \"f:\\fretus\\server\\check-company.ts\")",
+      "Bash(del \"f:\\fretus\\server\\check-google-key.ts\" \"f:\\fretus\\server\\check-company.ts\")",
+      "Bash(timeout:*)",
+      "Bash(del \"f:\\fretus\\server\\check-deliveries.ts\" \"f:\\fretus\\server\\check-request-details.ts\" \"f:\\fretus\\server\\check-tables.ts\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,9 +1,6 @@
-import { Pool, neonConfig } from '@neondatabase/serverless';
-import { drizzle } from 'drizzle-orm/neon-serverless';
-import ws from "ws";
+import { Pool } from 'pg';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from "@shared/schema";
-
-neonConfig.webSocketConstructor = ws;
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -11,5 +8,20 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-export const db = drizzle({ client: pool, schema });
+// Log para debug - verificar qual banco está sendo usado
+console.log("\n===========================================");
+console.log("🔗 DATABASE_URL:", process.env.DATABASE_URL);
+const dbName = process.env.DATABASE_URL?.split('/').pop()?.split('?')[0];
+console.log("📊 Conectando ao banco:", dbName);
+if (dbName !== 'fretus-dev') {
+  console.error("⚠️  ERRO: Conectando ao banco ERRADO! Deveria ser 'fretus-dev'");
+  console.error("⚠️  Banco atual:", dbName);
+}
+console.log("===========================================\n");
+
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false
+});
+
+export const db = drizzle(pool, { schema });

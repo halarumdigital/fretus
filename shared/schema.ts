@@ -1,20 +1,511 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, boolean, timestamp, numeric, integer, uuid } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { relations } from "drizzle-orm";
 
+// ========================================
+// USERS (Passageiros/Usuários)
+// ========================================
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: text("email").notNull().unique(),
-  password: text("password").notNull(),
   nome: text("nome").notNull(),
+  email: text("email").notNull().unique(),
+  mobile: varchar("mobile", { length: 20 }).unique(),
+  password: text("password").notNull(),
+
+  profilePicture: text("profile_picture"),
+  active: boolean("active").notNull().default(true),
+  emailConfirmed: boolean("email_confirmed").notNull().default(false),
+  mobileConfirmed: boolean("mobile_confirmed").notNull().default(false),
+
+  // Ratings
+  rating: numeric("rating", { precision: 3, scale: 2 }).default("0"),
+  ratingTotal: numeric("rating_total").default("0"),
+  noOfRatings: integer("no_of_ratings").default(0),
+
+  // Push Notifications (para depois)
+  fcmToken: text("fcm_token"),
+  apnToken: text("apn_token"),
+  loginBy: varchar("login_by", { length: 20 }).default("web"),
+
+  // Referral (para depois)
+  refferalCode: varchar("refferal_code", { length: 50 }).unique(),
+  referredBy: varchar("referred_by", { length: 255 }),
+
+  // Preferences
+  timezone: varchar("timezone", { length: 100 }).default("America/Sao_Paulo"),
+  lang: varchar("lang", { length: 10 }).default("pt"),
+  gender: varchar("gender", { length: 10 }),
+
+  // Admin flag
   isAdmin: boolean("is_admin").notNull().default(false),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// SERVICE LOCATIONS (Cidades)
+// ========================================
+export const serviceLocations = pgTable("service_locations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 255 }).notNull(),
+  state: varchar("state", { length: 2 }).notNull(), // UF - Estado
+
+  active: boolean("active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// VEHICLE TYPES (Categorias de Veículos)
+// ========================================
+export const vehicleTypes = pgTable("vehicle_types", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 100 }).notNull(),
+  icon: text("icon"), // URL do ícone
+  capacity: integer("capacity").notNull().default(4),
+  active: boolean("active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// BRANDS (Marcas de Veículos)
+// ========================================
+export const brands = pgTable("brands", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 100 }).notNull(),
+  active: boolean("active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// VEHICLE MODELS (Modelos de Veículos)
+// ========================================
+export const vehicleModels = pgTable("vehicle_models", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brandId: varchar("brand_id").notNull().references(() => brands.id),
+  name: varchar("name", { length: 100 }).notNull(),
+  active: boolean("active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// DRIVER DOCUMENT TYPES (Tipos de Documentos do Motorista)
+// ========================================
+export const driverDocumentTypes = pgTable("driver_document_types", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  required: boolean("required").notNull().default(true),
+  active: boolean("active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// DRIVER DOCUMENTS (Documentos Enviados pelos Motoristas)
+// ========================================
+export const driverDocuments = pgTable("driver_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  driverId: varchar("driver_id").notNull().references(() => drivers.id, { onDelete: "cascade" }),
+  documentTypeId: varchar("document_type_id").notNull().references(() => driverDocumentTypes.id),
+  documentUrl: text("document_url").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // pending, approved, rejected
+  rejectionReason: text("rejection_reason"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// DRIVER NOTES (Comentários/Notas sobre Motoristas)
+// ========================================
+export const driverNotes = pgTable("driver_notes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  driverId: varchar("driver_id").notNull().references(() => drivers.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id), // Quem adicionou o comentário
+  note: text("note").notNull(),
+  noteType: varchar("note_type", { length: 20 }).notNull().default("general"), // general, block, unblock, warning
+
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// ========================================
+// COMPANIES (Empresas)
+// ========================================
+export const companies = pgTable("companies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 255 }).notNull(),
+  cnpj: varchar("cnpj", { length: 18 }).unique(),
+  email: varchar("email", { length: 255 }),
+  phone: varchar("phone", { length: 20 }),
+
+  // Responsável
+  responsibleName: varchar("responsible_name", { length: 255 }),
+  responsibleWhatsapp: varchar("responsible_whatsapp", { length: 20 }),
+  responsibleEmail: varchar("responsible_email", { length: 255 }),
+
+  // Endereço
+  street: varchar("street", { length: 255 }),
+  number: varchar("number", { length: 20 }),
+  complement: varchar("complement", { length: 100 }),
+  neighborhood: varchar("neighborhood", { length: 100 }),
+  cep: varchar("cep", { length: 10 }),
+  city: varchar("city", { length: 100 }),
+  state: varchar("state", { length: 2 }),
+  reference: text("reference"),
+
+  active: boolean("active").notNull().default(true),
+  rating: numeric("rating", { precision: 2, scale: 1 }).default("0"),
+  password: varchar("password", { length: 255 }),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// CITY PRICES (Preços por Categoria em cada Cidade)
+// ========================================
+export const cityPrices = pgTable("city_prices", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  serviceLocationId: varchar("service_location_id").notNull().references(() => serviceLocations.id),
+  vehicleTypeId: varchar("vehicle_type_id").notNull().references(() => vehicleTypes.id),
+
+  // Payment Methods
+  paymentType: varchar("payment_type", { length: 20 }).notNull().default("cash"),
+
+  // Pricing
+  basePrice: numeric("base_price", { precision: 10, scale: 2 }).notNull(),
+  pricePerDistance: numeric("price_per_distance", { precision: 10, scale: 2 }).notNull(),
+  pricePerTime: numeric("price_per_time", { precision: 10, scale: 2 }).notNull(),
+  baseDistance: numeric("base_distance", { precision: 10, scale: 2 }).notNull().default("0"),
+
+  // Waiting Charges
+  waitingChargePerMinute: numeric("waiting_charge_per_minute", { precision: 10, scale: 2 }).default("0"),
+  freeWaitingTimeMins: integer("free_waiting_time_mins").default(5),
+
+  // Cancellation
+  cancellationFee: numeric("cancellation_fee", { precision: 10, scale: 2 }).default("0"),
+
+  // Stop and Return Prices
+  stopPrice: numeric("stop_price", { precision: 10, scale: 2 }).default("0"),
+  returnPrice: numeric("return_price", { precision: 10, scale: 2 }).default("0"),
+
+  // Service Tax
+  serviceTax: numeric("service_tax", { precision: 5, scale: 2 }).default("0"),
+
+  // Commissions (Admin)
+  adminCommisionType: varchar("admin_commision_type", { length: 20 }).notNull().default("percentage"),
+  adminCommision: numeric("admin_commision", { precision: 10, scale: 2 }).notNull().default("20"),
+
+  // Surge Pricing
+  surgePricing: boolean("surge_pricing").notNull().default(false),
+  peakHourStart: varchar("peak_hour_start", { length: 5 }),
+  peakHourEnd: varchar("peak_hour_end", { length: 5 }),
+  peakHourMultiplier: numeric("peak_hour_multiplier", { precision: 3, scale: 2 }).default("1"),
+
+  active: boolean("active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// DRIVERS (Motoristas)
+// ========================================
+export const drivers = pgTable("drivers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id), // Opcional - apenas para compatibilidade
+  serviceLocationId: varchar("service_location_id").notNull().references(() => serviceLocations.id),
+
+  // Personal Info
+  name: varchar("name", { length: 255 }).notNull(),
+  cpf: varchar("cpf", { length: 14 }),
+  mobile: varchar("mobile", { length: 20 }).notNull(),
+  email: varchar("email", { length: 255 }),
+  password: text("password"),
+  profilePicture: text("profile_picture"),
+
+  // Vehicle Info
+  vehicleTypeId: varchar("vehicle_type_id").references(() => vehicleTypes.id),
+  brandId: varchar("brand_id").references(() => brands.id),
+  modelId: varchar("model_id").references(() => vehicleModels.id),
+  carMake: varchar("car_make", { length: 100 }),
+  carModel: varchar("car_model", { length: 100 }),
+  carNumber: varchar("car_number", { length: 50 }),
+  carColor: varchar("car_color", { length: 50 }),
+  carYear: varchar("car_year", { length: 4 }),
+
+  // Status
+  active: boolean("active").notNull().default(true),
+  approve: boolean("approve").notNull().default(false),
+  available: boolean("available").notNull().default(false),
+
+  // Documents
+  uploadedDocuments: boolean("uploaded_documents").notNull().default(false),
+
+  // Ratings
+  rating: numeric("rating", { precision: 3, scale: 2 }).default("0"),
+  ratingTotal: numeric("rating_total").default("0"),
+  noOfRatings: integer("no_of_ratings").default(0),
+
+  // Location (armazenamos lat/lng simples)
+  latitude: numeric("latitude", { precision: 10, scale: 7 }),
+  longitude: numeric("longitude", { precision: 10, scale: 7 }),
+
+  // Push Notifications
+  fcmToken: text("fcm_token"),
+  apnToken: text("apn_token"),
+  timezone: varchar("timezone", { length: 100 }).default("America/Sao_Paulo"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// REQUESTS (Corridas)
+// ========================================
+export const requests = pgTable("requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requestNumber: varchar("request_number", { length: 50 }).unique().notNull(),
+
+  // Participants (userId OU companyId deve estar presente)
+  userId: varchar("user_id").references(() => users.id),
+  companyId: varchar("company_id").references(() => companies.id),
+  driverId: varchar("driver_id").references(() => drivers.id),
+
+  // Type
+  zoneTypeId: varchar("zone_type_id").notNull().references(() => vehicleTypes.id),
+  serviceLocationId: varchar("service_location_id").references(() => serviceLocations.id),
+
+  // Timing
+  isLater: boolean("is_later").notNull().default(false),
+  tripStartTime: timestamp("trip_start_time"),
+  acceptedAt: timestamp("accepted_at"),
+  arrivedAt: timestamp("arrived_at"),
+  tripStartedAt: timestamp("trip_started_at"),
+  completedAt: timestamp("completed_at"),
+  cancelledAt: timestamp("cancelled_at"),
+
+  // Status Flags
+  isDriverStarted: boolean("is_driver_started").notNull().default(false),
+  isDriverArrived: boolean("is_driver_arrived").notNull().default(false),
+  isTripStart: boolean("is_trip_start").notNull().default(false),
+  isCompleted: boolean("is_completed").notNull().default(false),
+  isCancelled: boolean("is_cancelled").notNull().default(false),
+
+  // Cancellation
+  cancelReason: text("cancel_reason"),
+  cancelMethod: varchar("cancel_method", { length: 20 }),
+
+  // Trip Details
+  totalDistance: numeric("total_distance", { precision: 10, scale: 2 }),
+  totalTime: numeric("total_time", { precision: 10, scale: 2 }),
+
+  // Payment (simplificado - apenas cash por enquanto)
+  paymentOpt: integer("payment_opt").notNull().default(0), // 0: cash
+  isPaid: boolean("is_paid").notNull().default(false),
+
+  // Ratings
+  userRated: boolean("user_rated").notNull().default(false),
+  driverRated: boolean("driver_rated").notNull().default(false),
+
+  // Config
+  timezone: varchar("timezone", { length: 100 }).default("America/Sao_Paulo"),
+  unit: varchar("unit", { length: 10 }).default("km"),
+  requestedCurrencyCode: varchar("requested_currency_code", { length: 10 }).default("BRL"),
+  requestedCurrencySymbol: varchar("requested_currency_symbol", { length: 10 }).default("R$"),
+
+  // Security
+  rideOtp: varchar("ride_otp", { length: 10 }),
+
+  // Pricing
+  requestEtaAmount: numeric("request_eta_amount", { precision: 10, scale: 2 }),
+  isSurgeApplied: boolean("is_surge_applied").notNull().default(false),
+
+  // Polyline
+  polyLine: text("poly_line"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// REQUEST PLACES (Localização da Corrida)
+// ========================================
+export const requestPlaces = pgTable("request_places", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requestId: varchar("request_id").notNull().references(() => requests.id),
+
+  // Pickup
+  pickLat: numeric("pick_lat", { precision: 10, scale: 7 }).notNull(),
+  pickLng: numeric("pick_lng", { precision: 10, scale: 7 }).notNull(),
+  pickAddress: text("pick_address").notNull(),
+
+  // Drop
+  dropLat: numeric("drop_lat", { precision: 10, scale: 7 }).notNull(),
+  dropLng: numeric("drop_lng", { precision: 10, scale: 7 }).notNull(),
+  dropAddress: text("drop_address").notNull(),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// REQUEST BILLS (Cobrança da Corrida)
+// ========================================
+export const requestBills = pgTable("request_bills", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requestId: varchar("request_id").notNull().references(() => requests.id),
+
+  // Base Pricing
+  basePrice: numeric("base_price", { precision: 10, scale: 2 }).notNull(),
+  baseDistance: numeric("base_distance", { precision: 10, scale: 2 }).notNull(),
+
+  // Distance Pricing
+  pricePerDistance: numeric("price_per_distance", { precision: 10, scale: 2 }).notNull(),
+  distancePrice: numeric("distance_price", { precision: 10, scale: 2 }).notNull(),
+
+  // Time Pricing
+  pricePerTime: numeric("price_per_time", { precision: 10, scale: 2 }).notNull(),
+  timePrice: numeric("time_price", { precision: 10, scale: 2 }).notNull(),
+
+  // Fees
+  cancellationFee: numeric("cancellation_fee", { precision: 10, scale: 2 }).default("0"),
+  waitingCharge: numeric("waiting_charge", { precision: 10, scale: 2 }).default("0"),
+
+  // Taxes
+  serviceTax: numeric("service_tax", { precision: 10, scale: 2 }).default("0"),
+  serviceTaxPercentage: numeric("service_tax_percentage", { precision: 5, scale: 2 }).default("0"),
+
+  // Commissions
+  adminCommision: numeric("admin_commision", { precision: 10, scale: 2 }).notNull(),
+  adminCommisionType: varchar("admin_commision_type", { length: 20 }).notNull(),
+
+  // Surge
+  surgePrice: numeric("surge_price", { precision: 10, scale: 2 }).default("0"),
+
+  // Total
+  totalAmount: numeric("total_amount", { precision: 10, scale: 2 }).notNull(),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// CANCELLATION REASONS
+// ========================================
+export const cancellationReasons = pgTable("cancellation_reasons", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  reason: text("reason").notNull(),
+  userType: varchar("user_type", { length: 20 }).notNull(), // 'user' ou 'driver'
+  active: boolean("active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ========================================
+// FAVOURITE LOCATIONS
+// ========================================
+export const favouriteLocations = pgTable("favourite_locations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  address: text("address").notNull(),
+  lat: numeric("lat", { precision: 10, scale: 7 }).notNull(),
+  lng: numeric("lng", { precision: 10, scale: 7 }).notNull(),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ========================================
+// REQUEST RATINGS
+// ========================================
+export const requestRatings = pgTable("request_ratings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requestId: varchar("request_id").notNull().references(() => requests.id),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  driverId: varchar("driver_id").notNull().references(() => drivers.id),
+  rating: integer("rating").notNull(),
+  comment: text("comment"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ========================================
+// SETTINGS (Configurações do Sistema)
+// ========================================
+export const settings = pgTable("settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Driver Assignment
+  driverAssignmentType: varchar("driver_assignment_type", { length: 20 }).notNull().default("one_by_one"), // one_by_one | all
+  driverSearchRadius: numeric("driver_search_radius", { precision: 10, scale: 2 }).notNull().default("10"), // km
+  minTimeToFindDriver: integer("min_time_to_find_driver").notNull().default(120), // segundos
+  driverAcceptanceTimeout: integer("driver_acceptance_timeout").notNull().default(30), // segundos
+
+  // Pricing
+  canRoundTripValues: boolean("can_round_trip_values").notNull().default(true),
+  adminCommissionPercentage: numeric("admin_commission_percentage", { precision: 5, scale: 2 }).notNull().default("20"),
+
+  // OTP Settings
+  enableOtpForLogin: boolean("enable_otp_for_login").notNull().default(false),
+  enableOtpForRegistration: boolean("enable_otp_for_registration").notNull().default(false),
+
+  // Payment Gateway (Asaas/Efi)
+  paymentGateway: varchar("payment_gateway", { length: 20 }).default("asaas"), // asaas | efi
+  asaasApiKey: text("asaas_api_key"),
+  asaasEnvironment: varchar("asaas_environment", { length: 20 }).default("sandbox"), // sandbox | production
+  efiClientId: text("efi_client_id"),
+  efiClientSecret: text("efi_client_secret"),
+  efiCertificate: text("efi_certificate"),
+  efiEnvironment: varchar("efi_environment", { length: 20 }).default("sandbox"),
+
+  // Referral System
+  enableReferralSystem: boolean("enable_referral_system").notNull().default(true),
+  referralBonusAmount: numeric("referral_bonus_amount", { precision: 10, scale: 2 }).default("10"),
+  referralMinimumTrips: integer("referral_minimum_trips").default(1),
+
+  // Map Configuration
+  mapProvider: varchar("map_provider", { length: 20 }).notNull().default("google"), // google | openstreet
+  googleMapsApiKey: text("google_maps_api_key"),
+
+  // Firebase Configuration
+  firebaseProjectId: text("firebase_project_id"),
+  firebaseClientEmail: text("firebase_client_email"),
+  firebasePrivateKey: text("firebase_private_key"),
+  firebaseDatabaseUrl: text("firebase_database_url"),
+
+  // SMTP Configuration
+  smtpHost: varchar("smtp_host", { length: 255 }),
+  smtpPort: integer("smtp_port").default(587),
+  smtpUser: varchar("smtp_user", { length: 255 }),
+  smtpPassword: text("smtp_password"),
+  smtpFromEmail: varchar("smtp_from_email", { length: 255 }),
+  smtpFromName: varchar("smtp_from_name", { length: 255 }),
+  smtpSecure: boolean("smtp_secure").default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// ZOD SCHEMAS
+// ========================================
 
 export const insertUserSchema = createInsertSchema(users).omit({
   id: true,
   createdAt: true,
+  updatedAt: true,
 });
 
 export const loginSchema = z.object({
@@ -22,6 +513,166 @@ export const loginSchema = z.object({
   password: z.string().min(1, "Senha obrigatória"),
 });
 
+export const insertServiceLocationSchema = createInsertSchema(serviceLocations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertVehicleTypeSchema = createInsertSchema(vehicleTypes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertBrandSchema = createInsertSchema(brands).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertVehicleModelSchema = createInsertSchema(vehicleModels).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertDriverDocumentTypeSchema = createInsertSchema(driverDocumentTypes).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertDriverDocumentSchema = createInsertSchema(driverDocuments).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertDriverNoteSchema = createInsertSchema(driverNotes).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertCompanySchema = createInsertSchema(companies).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertCityPriceSchema = createInsertSchema(cityPrices).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertDriverSchema = createInsertSchema(drivers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertRequestSchema = createInsertSchema(requests).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const insertSettingsSchema = z.object({
+  // Driver Assignment
+  driverAssignmentType: z.enum(["one_by_one", "all"]),
+  driverSearchRadius: z.union([z.string(), z.number()]).transform(val => String(val)),
+  minTimeToFindDriver: z.union([z.string(), z.number()]).transform(val => Number(val)),
+  driverAcceptanceTimeout: z.union([z.string(), z.number()]).transform(val => Number(val)),
+
+  // Pricing
+  canRoundTripValues: z.boolean(),
+  adminCommissionPercentage: z.union([z.string(), z.number()]).transform(val => String(val)),
+
+  // OTP Settings
+  enableOtpForLogin: z.boolean(),
+  enableOtpForRegistration: z.boolean(),
+
+  // Payment Gateway
+  paymentGateway: z.enum(["asaas", "efi"]).nullable().optional(),
+  asaasApiKey: z.string().nullable().optional(),
+  asaasEnvironment: z.enum(["sandbox", "production"]).nullable().optional(),
+  efiClientId: z.string().nullable().optional(),
+  efiClientSecret: z.string().nullable().optional(),
+  efiCertificate: z.string().nullable().optional(),
+  efiEnvironment: z.enum(["sandbox", "production"]).nullable().optional(),
+
+  // Referral System
+  enableReferralSystem: z.boolean(),
+  referralBonusAmount: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : String(val)).nullable().optional(),
+  referralMinimumTrips: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : Number(val)).nullable().optional(),
+
+  // Map Configuration
+  mapProvider: z.enum(["google", "openstreet"]),
+  googleMapsApiKey: z.string().nullable().optional(),
+
+  // Firebase Configuration
+  firebaseProjectId: z.string().nullable().optional(),
+  firebaseClientEmail: z.string().nullable().optional(),
+  firebasePrivateKey: z.string().nullable().optional(),
+  firebaseDatabaseUrl: z.string().nullable().optional(),
+
+  // SMTP Configuration
+  smtpHost: z.string().nullable().optional(),
+  smtpPort: z.union([z.string(), z.number(), z.null()]).transform(val => val === null ? null : Number(val)).nullable().optional(),
+  smtpUser: z.string().nullable().optional(),
+  smtpPassword: z.string().nullable().optional(),
+  smtpFromEmail: z.string().nullable().optional(),
+  smtpFromName: z.string().nullable().optional(),
+  smtpSecure: z.boolean().nullable().optional(),
+});
+
+// ========================================
+// TYPES
+// ========================================
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type LoginCredentials = z.infer<typeof loginSchema>;
+
+export type ServiceLocation = typeof serviceLocations.$inferSelect;
+export type InsertServiceLocation = z.infer<typeof insertServiceLocationSchema>;
+
+export type VehicleType = typeof vehicleTypes.$inferSelect;
+export type InsertVehicleType = z.infer<typeof insertVehicleTypeSchema>;
+
+export type Brand = typeof brands.$inferSelect;
+export type InsertBrand = z.infer<typeof insertBrandSchema>;
+
+export type VehicleModel = typeof vehicleModels.$inferSelect;
+export type InsertVehicleModel = z.infer<typeof insertVehicleModelSchema>;
+
+export type DriverDocumentType = typeof driverDocumentTypes.$inferSelect;
+export type InsertDriverDocumentType = z.infer<typeof insertDriverDocumentTypeSchema>;
+
+export type DriverDocument = typeof driverDocuments.$inferSelect;
+export type InsertDriverDocument = z.infer<typeof insertDriverDocumentSchema>;
+
+export type DriverNote = typeof driverNotes.$inferSelect;
+export type InsertDriverNote = z.infer<typeof insertDriverNoteSchema>;
+
+export type Company = typeof companies.$inferSelect;
+export type InsertCompany = z.infer<typeof insertCompanySchema>;
+
+export type CityPrice = typeof cityPrices.$inferSelect;
+export type InsertCityPrice = z.infer<typeof insertCityPriceSchema>;
+
+export type Driver = typeof drivers.$inferSelect;
+export type InsertDriver = z.infer<typeof insertDriverSchema>;
+
+export type Request = typeof requests.$inferSelect;
+export type InsertRequest = z.infer<typeof insertRequestSchema>;
+
+export type RequestPlace = typeof requestPlaces.$inferSelect;
+export type RequestBill = typeof requestBills.$inferSelect;
+export type CancellationReason = typeof cancellationReasons.$inferSelect;
+export type FavouriteLocation = typeof favouriteLocations.$inferSelect;
+export type RequestRating = typeof requestRatings.$inferSelect;
+
+export type Settings = typeof settings.$inferSelect;
+export type InsertSettings = z.infer<typeof insertSettingsSchema>;

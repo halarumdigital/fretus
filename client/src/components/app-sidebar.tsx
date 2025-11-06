@@ -1,7 +1,8 @@
-import { Home, Users, Settings, LogOut } from "lucide-react";
+import { Home, Users, MapPin, Car, DollarSign, UserCog, Settings, LogOut, ChevronDown, FolderTree, FileText, CarFront, Building2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useState } from "react";
 import {
   Sidebar,
   SidebarContent,
@@ -12,7 +13,15 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarFooter,
+  SidebarMenuSub,
+  SidebarMenuSubItem,
+  SidebarMenuSubButton,
 } from "@/components/ui/sidebar";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 
@@ -33,6 +42,68 @@ const menuItems = [
     title: "Usuários",
     url: "/usuarios",
     icon: Users,
+  },
+  {
+    title: "Empresas",
+    url: "/empresas",
+    icon: Building2,
+  },
+  {
+    title: "Cadastros",
+    icon: FolderTree,
+    items: [
+      {
+        title: "Cidades",
+        url: "/cidades",
+        icon: MapPin,
+      },
+      {
+        title: "Categorias",
+        url: "/categorias",
+        icon: Car,
+      },
+      {
+        title: "Marcas e Modelos",
+        url: "/marcas-modelos",
+        icon: CarFront,
+      },
+      {
+        title: "Documentos do Motorista",
+        url: "/documentos-motorista",
+        icon: FileText,
+      },
+    ],
+  },
+  {
+    title: "Preços",
+    url: "/precos",
+    icon: DollarSign,
+  },
+  {
+    title: "Motoristas",
+    icon: UserCog,
+    items: [
+      {
+        title: "Ativos",
+        url: "/motoristas/ativos",
+        icon: UserCog,
+      },
+      {
+        title: "Bloqueados",
+        url: "/motoristas/bloqueados",
+        icon: UserCog,
+      },
+      {
+        title: "Aguardando",
+        url: "/motoristas/aguardando",
+        icon: UserCog,
+      },
+    ],
+  },
+  {
+    title: "Configurações",
+    url: "/configuracoes",
+    icon: Settings,
   },
 ];
 
@@ -75,23 +146,63 @@ export function AppSidebar() {
           <SidebarGroupLabel>Menu</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location === item.url}
-                    data-testid={`sidebar-${item.title.toLowerCase()}`}
-                  >
-                    <a href={item.url} onClick={(e) => {
-                      e.preventDefault();
-                      setLocation(item.url);
-                    }}>
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </a>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {menuItems.map((item) => {
+                // If item has subitems, render as collapsible
+                if (item.items) {
+                  return (
+                    <Collapsible key={item.title} className="group/collapsible">
+                      <SidebarMenuItem>
+                        <CollapsibleTrigger asChild>
+                          <SidebarMenuButton>
+                            <item.icon />
+                            <span>{item.title}</span>
+                            <ChevronDown className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-180" />
+                          </SidebarMenuButton>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                          <SidebarMenuSub>
+                            {item.items.map((subItem) => (
+                              <SidebarMenuSubItem key={subItem.title}>
+                                <SidebarMenuSubButton
+                                  asChild
+                                  isActive={location === subItem.url}
+                                >
+                                  <a href={subItem.url} onClick={(e) => {
+                                    e.preventDefault();
+                                    setLocation(subItem.url);
+                                  }}>
+                                    <subItem.icon />
+                                    <span>{subItem.title}</span>
+                                  </a>
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            ))}
+                          </SidebarMenuSub>
+                        </CollapsibleContent>
+                      </SidebarMenuItem>
+                    </Collapsible>
+                  );
+                }
+
+                // Regular menu item
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={location === item.url}
+                      data-testid={`sidebar-${item.title.toLowerCase()}`}
+                    >
+                      <a href={item.url} onClick={(e) => {
+                        e.preventDefault();
+                        setLocation(item.url);
+                      }}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </a>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
