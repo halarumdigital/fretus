@@ -69,29 +69,19 @@ function MapaContent({ apiKey }: { apiKey: string }) {
   const [mapCenter, setMapCenter] = useState({ lat: -15.7801, lng: -47.9292 }); // Brasília default
 
   // Buscar cidades
-  const { data: cidades = [], isLoading: isLoadingCidades, error: errorCidades } = useQuery<Cidade[]>({
+  const { data: cidades = [], isLoading: isLoadingCidades } = useQuery<Cidade[]>({
     queryKey: ["/api/service-locations"],
   });
 
-  // Debug: Log das cidades carregadas
-  useEffect(() => {
-    console.log("🗺️ Cidades carregadas:", cidades);
-    console.log("🗺️ Total de cidades:", cidades.length);
-    if (errorCidades) {
-      console.error("❌ Erro ao carregar cidades:", errorCidades);
-    }
-  }, [cidades, errorCidades]);
-
-  // Buscar motoristas
+  // Buscar motoristas (atualiza automaticamente a cada 10 segundos)
   const { data: allMotoristas = [], isLoading: isLoadingMotoristas } = useQuery<Motorista[]>({
     queryKey: ["/api/drivers"],
+    refetchInterval: 10000, // Atualiza a cada 10 segundos
   });
 
-  // Filtrar motoristas por cidade selecionada
-  const motoristas = useMemo(() => {
-    if (!selectedCityId || selectedCityId === "all") return allMotoristas;
-    return allMotoristas.filter((m) => m.cityId === selectedCityId);
-  }, [allMotoristas, selectedCityId]);
+  // Mostrar todos os motoristas no mapa (independente da cidade de cadastro)
+  // O filtro de cidade apenas centraliza o mapa, não filtra motoristas
+  const motoristas = useMemo(() => allMotoristas, [allMotoristas]);
 
   // Carregar Google Maps API - agora com API key fixa
   const { isLoaded, loadError } = useJsApiLoader({
@@ -166,8 +156,8 @@ function MapaContent({ apiKey }: { apiKey: string }) {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Filtrar por Cidade</CardTitle>
-              <CardDescription>Selecione uma cidade para visualizar os motoristas</CardDescription>
+              <CardTitle>Centralizar Mapa</CardTitle>
+              <CardDescription>Selecione uma cidade para centralizar o mapa (mostra todos os motoristas disponíveis)</CardDescription>
             </div>
 
             {/* Legenda de cores */}

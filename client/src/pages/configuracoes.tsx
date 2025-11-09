@@ -41,6 +41,7 @@ const configuracaoSchema = z.object({
   driverSearchRadius: z.number().min(1),
   minTimeToFindDriver: z.number().min(1),
   driverAcceptanceTimeout: z.number().min(1),
+  autoCancelTimeout: z.number().min(5),
 
   // Pricing
   canRoundTripValues: z.boolean(),
@@ -91,6 +92,7 @@ const mockSettings: ConfiguracaoForm = {
   driverSearchRadius: 10,
   minTimeToFindDriver: 120,
   driverAcceptanceTimeout: 30,
+  autoCancelTimeout: 30,
   canRoundTripValues: true,
   adminCommissionPercentage: 20,
   enableOtpForLogin: false,
@@ -143,12 +145,24 @@ export default function Configuracoes() {
         driverSearchRadius: typeof settings.driverSearchRadius === 'string'
           ? parseFloat(settings.driverSearchRadius)
           : settings.driverSearchRadius,
+        minTimeToFindDriver: typeof settings.minTimeToFindDriver === 'string'
+          ? parseInt(settings.minTimeToFindDriver)
+          : settings.minTimeToFindDriver,
+        driverAcceptanceTimeout: typeof settings.driverAcceptanceTimeout === 'string'
+          ? parseInt(settings.driverAcceptanceTimeout)
+          : settings.driverAcceptanceTimeout,
+        autoCancelTimeout: typeof settings.autoCancelTimeout === 'string'
+          ? parseInt(settings.autoCancelTimeout)
+          : settings.autoCancelTimeout,
         adminCommissionPercentage: typeof settings.adminCommissionPercentage === 'string'
           ? parseFloat(settings.adminCommissionPercentage)
           : settings.adminCommissionPercentage,
         referralBonusAmount: settings.referralBonusAmount && typeof settings.referralBonusAmount === 'string'
           ? parseFloat(settings.referralBonusAmount)
           : settings.referralBonusAmount,
+        referralMinimumTrips: settings.referralMinimumTrips && typeof settings.referralMinimumTrips === 'string'
+          ? parseInt(settings.referralMinimumTrips)
+          : settings.referralMinimumTrips,
         smtpPort: settings.smtpPort && typeof settings.smtpPort === 'string'
           ? parseInt(settings.smtpPort)
           : settings.smtpPort,
@@ -160,9 +174,15 @@ export default function Configuracoes() {
   // Mutation para salvar configurações
   const saveMutation = useMutation({
     mutationFn: async (data: ConfiguracaoForm) => {
+      console.log("🚀 Enviando dados para salvar:");
+      console.log("   autoCancelTimeout:", data.autoCancelTimeout, typeof data.autoCancelTimeout);
+      console.log("   driverAcceptanceTimeout:", data.driverAcceptanceTimeout, typeof data.driverAcceptanceTimeout);
+      console.log("   minTimeToFindDriver:", data.minTimeToFindDriver, typeof data.minTimeToFindDriver);
       return await apiRequest("PUT", "/api/settings", data);
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      console.log("✅ Resposta do servidor após salvar:");
+      console.log("   autoCancelTimeout:", data.autoCancelTimeout, typeof data.autoCancelTimeout);
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
       toast({
         title: "Sucesso!",
@@ -233,7 +253,7 @@ export default function Configuracoes() {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Tipo de Chamada</FormLabel>
-                          <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <Select onValueChange={field.onChange} value={field.value}>
                             <FormControl>
                               <SelectTrigger>
                                 <SelectValue placeholder="Selecione o tipo" />
@@ -312,6 +332,28 @@ export default function Configuracoes() {
                           </FormControl>
                           <FormDescription>
                             Tempo que o motorista tem para aceitar a corrida
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="autoCancelTimeout"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Tempo para Cancelamento Automático (minutos)</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              placeholder="30"
+                              value={field.value}
+                              onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : 0)}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            Tempo em minutos para cancelar automaticamente entregas não aceitas
                           </FormDescription>
                           <FormMessage />
                         </FormItem>

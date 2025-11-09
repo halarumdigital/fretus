@@ -36,7 +36,21 @@
       "Bash(del \"f:\\fretus\\check-firebase-settings.ts\" \"f:\\fretus\\test-firebase-key.ts\")",
       "Bash(del \"f:\\fretus\\server\\create-driver-notifications-table.ts\")",
       "Bash(dir:*)",
-      "Bash(del \"f:\\fretus\\check-cities.ts\" \"f:\\fretus\\add-columns.ts\")"
+      "Bash(del \"f:\\fretus\\check-cities.ts\" \"f:\\fretus\\add-columns.ts\")",
+      "Bash(del \"f:\\fretus\\check-driver-coords.ts\")",
+      "Bash(del \"f:\\fretus\\check-settings.ts\" \"f:\\fretus\\add-settings-columns.ts\" \"f:\\fretus\\update-search-radius.ts\" \"f:\\fretus\\check-radius.ts\" \"f:\\fretus\\check-driver-status.ts\")",
+      "Bash(del \"f:\\fretus\\check-all-settings.ts\")",
+      "Bash(del \"f:\\fretus\\check-requests-table.ts\" \"f:\\fretus\\check-bills-table.ts\")",
+      "Bash(cmd /c \"taskkill /F /PID 39132 && timeout /t 2 /nobreak && npm run dev\")",
+      "Bash(powershell -Command \"Stop-Process -Id 39132 -Force\")",
+      "Bash(powershell:*)",
+      "Bash(del \"f:\\fretus\\add-auto-cancel-column.ts\")",
+      "Bash(del \"f:\\fretus\\check-cancelled.ts\")",
+      "Bash(npx tsc:*)",
+      "Bash(node -e:*)",
+      "Bash(del \"f:\\fretus\\add-on-delivery-column.ts\")",
+      "Bash(del \"f:\\fretus\\apply-migration.ts\")",
+      "Bash(del \"f:\\fretus\\remove-unused-fields.ts\" \"f:\\fretus\\remove-commission-fields.ts\")"
     ],
     "deny": [],
     "ask": []

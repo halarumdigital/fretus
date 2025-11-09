@@ -518,28 +518,18 @@ export class DatabaseStorage implements IStorage {
         dropoffAddress: requestPlaces.dropAddress,
         distance: requests.totalDistance,
         totalTime: requests.totalTime,
-        totalPrice: requests.requestEtaAmount,
-        // Calcular ganho do motorista e comissão do app
-        driverEarnings: sql<string>`
-          CASE
-            WHEN ${requests.requestEtaAmount} IS NOT NULL
-            THEN CAST(${requests.requestEtaAmount} * (1 - COALESCE(${serviceLocations.adminCommissionPercentage}, 20) / 100) AS NUMERIC(10,2))
-            ELSE 0
-          END
-        `,
-        appCommission: sql<string>`
-          CASE
-            WHEN ${requests.requestEtaAmount} IS NOT NULL
-            THEN CAST(${requests.requestEtaAmount} * 20 / 100 AS NUMERIC(10,2))
-            ELSE 0
-          END
-        `,
+        totalPrice: requests.requestEtaAmount, // Valor LÍQUIDO para o motorista (após comissão)
+        // Ganho do motorista é o mesmo que totalPrice (já é o valor líquido)
+        driverEarnings: requests.requestEtaAmount,
+        // Comissão do app vem da tabela request_bills
+        appCommission: requestBills.adminCommision,
         createdAt: requests.createdAt,
         completedAt: requests.completedAt,
         cancelledAt: requests.cancelledAt,
       })
       .from(requests)
       .leftJoin(requestPlaces, eq(requests.id, requestPlaces.requestId))
+      .leftJoin(requestBills, eq(requests.id, requestBills.requestId))
       .leftJoin(serviceLocations, eq(requests.serviceLocationId, serviceLocations.id))
       .where(eq(requests.driverId, driverId))
       .orderBy(desc(requests.createdAt));
@@ -570,20 +560,16 @@ export class DatabaseStorage implements IStorage {
         dropoffAddress: requestPlaces.dropAddress,
         distance: requests.totalDistance,
         totalTime: requests.totalTime,
-        totalPrice: requests.requestEtaAmount,
-        appCommission: sql<string>`
-          CASE
-            WHEN ${requests.requestEtaAmount} IS NOT NULL
-            THEN CAST(${requests.requestEtaAmount} * 20 / 100 AS NUMERIC(10,2))
-            ELSE 0
-          END
-        `,
+        totalPrice: requestBills.totalAmount, // Valor BRUTO (antes da comissão) para empresa
+        appCommission: requestBills.adminCommision, // Comissão do app
         createdAt: requests.createdAt,
         completedAt: requests.completedAt,
         cancelledAt: requests.cancelledAt,
+        cancelReason: requests.cancelReason,
       })
       .from(requests)
       .leftJoin(requestPlaces, eq(requests.id, requestPlaces.requestId))
+      .leftJoin(requestBills, eq(requests.id, requestBills.requestId))
       .leftJoin(serviceLocations, eq(requests.serviceLocationId, serviceLocations.id))
       .leftJoin(drivers, eq(requests.driverId, drivers.id))
       .where(eq(requests.companyId, companyId))
@@ -646,7 +632,6 @@ export class DatabaseStorage implements IStorage {
         serviceLocationName: serviceLocations.name,
         vehicleTypeId: cityPrices.vehicleTypeId,
         vehicleTypeName: vehicleTypes.name,
-        paymentType: cityPrices.paymentType,
         basePrice: cityPrices.basePrice,
         pricePerDistance: cityPrices.pricePerDistance,
         pricePerTime: cityPrices.pricePerTime,
@@ -656,13 +641,6 @@ export class DatabaseStorage implements IStorage {
         cancellationFee: cityPrices.cancellationFee,
         stopPrice: cityPrices.stopPrice,
         returnPrice: cityPrices.returnPrice,
-        serviceTax: cityPrices.serviceTax,
-        adminCommisionType: cityPrices.adminCommisionType,
-        adminCommision: cityPrices.adminCommision,
-        surgePricing: cityPrices.surgePricing,
-        peakHourStart: cityPrices.peakHourStart,
-        peakHourEnd: cityPrices.peakHourEnd,
-        peakHourMultiplier: cityPrices.peakHourMultiplier,
         active: cityPrices.active,
         createdAt: cityPrices.createdAt,
         updatedAt: cityPrices.updatedAt,
@@ -744,11 +722,10 @@ export class DatabaseStorage implements IStorage {
         active: drivers.active,
         approve: drivers.approve,
         available: drivers.available,
+        onDelivery: drivers.onDelivery,
         rating: drivers.rating,
         latitude: drivers.latitude,
         longitude: drivers.longitude,
-        currentLatitude: drivers.latitude, // Alias para compatibilidade com o mapa
-        currentLongitude: drivers.longitude, // Alias para compatibilidade com o mapa
         createdAt: drivers.createdAt,
         updatedAt: drivers.updatedAt,
       })
@@ -757,7 +734,12 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(vehicleTypes, eq(drivers.vehicleTypeId, vehicleTypes.id))
       .orderBy(desc(drivers.createdAt));
 
-    return result;
+    // Converter latitude/longitude de string para number para compatibilidade com o mapa
+    return result.map(driver => ({
+      ...driver,
+      currentLatitude: driver.latitude ? parseFloat(driver.latitude) : null,
+      currentLongitude: driver.longitude ? parseFloat(driver.longitude) : null,
+    }));
   }
 
   async getDriver(id: string): Promise<Driver | undefined> {

@@ -75,7 +75,6 @@ type VehicleType = {
 const priceSchema = z.object({
   serviceLocationId: z.string().min(1, "Cidade é obrigatória"),
   vehicleTypeId: z.string().min(1, "Categoria é obrigatória"),
-  paymentType: z.string().default("cash"),
   basePrice: z.string().min(1, "Tarifa base é obrigatória"),
   pricePerDistance: z.string().min(1, "Preço por km é obrigatório"),
   pricePerTime: z.string().min(1, "Preço por minuto é obrigatório"),
@@ -85,12 +84,6 @@ const priceSchema = z.object({
   cancellationFee: z.string().default("0"),
   stopPrice: z.string().default("0"),
   returnPrice: z.string().default("0"),
-  adminCommisionType: z.string().default("percentage"),
-  adminCommision: z.string().default("20"),
-  surgePricing: z.boolean().default(false),
-  peakHourStart: z.string().optional(),
-  peakHourEnd: z.string().optional(),
-  peakHourMultiplier: z.string().default("1"),
   active: z.boolean().default(true),
 });
 
@@ -168,7 +161,6 @@ export default function Precos() {
     defaultValues: {
       serviceLocationId: "",
       vehicleTypeId: "",
-      paymentType: "cash",
       basePrice: "",
       pricePerDistance: "",
       pricePerTime: "",
@@ -178,12 +170,6 @@ export default function Precos() {
       cancellationFee: "0",
       stopPrice: "0",
       returnPrice: "0",
-      adminCommisionType: "percentage",
-      adminCommision: "20",
-      surgePricing: false,
-      peakHourStart: "",
-      peakHourEnd: "",
-      peakHourMultiplier: "1",
       active: true,
     },
   });
@@ -201,7 +187,6 @@ export default function Precos() {
     form.reset({
       serviceLocationId: preco.serviceLocationId,
       vehicleTypeId: preco.vehicleTypeId,
-      paymentType: preco.paymentType || "cash",
       basePrice: preco.basePrice,
       pricePerDistance: preco.pricePerDistance,
       pricePerTime: preco.pricePerTime,
@@ -211,12 +196,6 @@ export default function Precos() {
       cancellationFee: preco.cancellationFee,
       stopPrice: preco.stopPrice || "0",
       returnPrice: preco.returnPrice || "0",
-      adminCommisionType: preco.adminCommisionType || "percentage",
-      adminCommision: preco.adminCommision,
-      surgePricing: preco.surgePricing || false,
-      peakHourStart: preco.peakHourStart || "",
-      peakHourEnd: preco.peakHourEnd || "",
-      peakHourMultiplier: preco.peakHourMultiplier || "1",
       active: preco.active,
     });
     setIsDialogOpen(true);
@@ -227,7 +206,6 @@ export default function Precos() {
     form.reset({
       serviceLocationId: "",
       vehicleTypeId: "",
-      paymentType: "cash",
       basePrice: "",
       pricePerDistance: "",
       pricePerTime: "",
@@ -237,12 +215,6 @@ export default function Precos() {
       cancellationFee: "0",
       stopPrice: "0",
       returnPrice: "0",
-      adminCommisionType: "percentage",
-      adminCommision: "20",
-      surgePricing: false,
-      peakHourStart: "",
-      peakHourEnd: "",
-      peakHourMultiplier: "1",
       active: true,
     });
     setIsDialogOpen(true);

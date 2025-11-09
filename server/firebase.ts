@@ -66,32 +66,32 @@ export async function sendPushNotification(
       }
     }
 
+    // DATA-ONLY MESSAGE: Remove o campo "notification" para que o app
+    // tenha controle total e o listener onMessage seja chamado em foreground
     const message: admin.messaging.Message = {
-      notification: {
+      data: {
         title,
         body,
+        ...(data || {}),
       },
-      data: data || {},
       token: fcmToken,
       android: {
         priority: "high",
-        notification: {
-          sound: "default",
-          channelId: "delivery_channel",
-        },
       },
       apns: {
         payload: {
           aps: {
-            sound: "default",
-            badge: 1,
+            contentAvailable: true,
           },
+        },
+        headers: {
+          "apns-priority": "10",
         },
       },
     };
 
     const response = await admin.messaging().send(message);
-    console.log("✓ Notificação push enviada:", response);
+    console.log("✓ Notificação push DATA-ONLY enviada:", response);
     return response;
   } catch (error) {
     console.error("Erro ao enviar notificação push:", error);
@@ -114,38 +114,54 @@ export async function sendPushToMultipleDevices(
       }
     }
 
+    // DATA-ONLY MESSAGE: Remove o campo "notification" para que o app
+    // tenha controle total e o listener onMessage seja chamado em foreground
     const message: admin.messaging.MulticastMessage = {
-      notification: {
+      data: {
         title,
         body,
+        ...(data || {}),
       },
-      data: data || {},
       tokens: fcmTokens,
       android: {
         priority: "high",
-        notification: {
-          sound: "default",
-          channelId: "delivery_channel",
-        },
       },
       apns: {
         payload: {
           aps: {
-            sound: "default",
-            badge: 1,
+            contentAvailable: true,
           },
+        },
+        headers: {
+          "apns-priority": "10",
         },
       },
     };
 
+    console.log("📤 Enviando mensagem FCM:");
+    console.log("  - Número de tokens:", fcmTokens.length);
+    console.log("  - Dados:", message.data);
+    console.log("  - Android priority:", message.android?.priority);
+
     const response = await admin.messaging().sendEachForMulticast(message);
-    console.log(`✓ ${response.successCount} notificações enviadas de ${fcmTokens.length}`);
+
+    console.log("📨 Resposta do Firebase:");
+    console.log(`  - Sucesso: ${response.successCount}/${fcmTokens.length}`);
+    console.log(`  - Falhas: ${response.failureCount}`);
 
     if (response.failureCount > 0) {
+      console.error("❌ ERROS NO ENVIO:");
       response.responses.forEach((resp, idx) => {
         if (!resp.success) {
-          console.error(`Erro ao enviar para token ${idx}:`, resp.error);
+          console.error(`  Token ${idx} (${fcmTokens[idx].substring(0, 20)}...):`);
+          console.error(`    - Código: ${resp.error?.code}`);
+          console.error(`    - Mensagem: ${resp.error?.message}`);
         }
+      });
+    } else {
+      console.log("✅ Todas as notificações foram enviadas com sucesso!");
+      fcmTokens.forEach((token, idx) => {
+        console.log(`  ✓ Token ${idx}: ${token.substring(0, 30)}...`);
       });
     }
 

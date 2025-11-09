@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { storage } from "./storage";
-import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications } from "@shared/schema";
+import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings } from "@shared/schema";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { pool, db } from "./db";
@@ -379,8 +379,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // 3. Calcular valor da entrega (implementar lógica de precificação)
       // Por enquanto, vou usar um valor fixo baseado na distância
-      const basePrice = 5.00; // R$ 5 base
-      const pricePerKm = 2.50; // R$ 2.50 por km
+      const basePrice = 10.00; // R$ 10 base
+      const pricePerKm = 3.00; // R$ 3.00 por km
       const totalAmount = basePrice + (distance * pricePerKm);
       const adminCommission = totalAmount * (adminCommissionPercentage / 100);
       const driverAmount = totalAmount - adminCommission;
@@ -448,7 +448,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           customerName: customerName || null,
           zoneTypeId,
           notes: notes || null,
-          requestEtaAmount: totalAmount.toFixed(2),
+          requestEtaAmount: driverAmount.toFixed(2), // Valor líquido para o motorista (após comissão)
         })
         .returning();
 
@@ -480,6 +480,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           distancePrice: (distance * pricePerKm).toFixed(2),
           pricePerTime: "0",
           timePrice: "0",
+          totalAmount: totalAmount.toFixed(2), // Valor BRUTO (para empresa/admin)
+          adminCommision: adminCommission.toFixed(2), // Comissão do app
         });
 
       console.log(`✅ Cobrança registrada`);
@@ -512,16 +514,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (fcmTokens.length > 0) {
         const notificationData = {
           type: "new_delivery_request",
+          deliveryId: newRequest.id,
           requestId: newRequest.id,
           requestNumber: newRequest.requestNumber,
-          companyName: company?.name || "Empresa",
+          customerName: company?.name || "Empresa",
           pickupAddress,
-          deliveryAddress,
-          distance: distance.toFixed(1),
-          estimatedTime: estimatedTime.toString(),
-          driverAmount: driverAmount.toFixed(2),
+          dropoffAddress: deliveryAddress,
+          totalDistance: distance.toFixed(1),
+          totalTime: Math.ceil(estimatedTime).toString(),
+          estimatedAmount: driverAmount.toFixed(2),
+          acceptanceTimeout: driverAcceptanceTimeout.toString(),
+          searchTimeout: minTimeToFindDriver.toString(),
           expiresAt: expiresAt.toISOString(),
         };
+
+        console.log("🔔 Preparando envio de notificações FCM:");
+        console.log("  - Número de tokens:", fcmTokens.length);
+        console.log("  - Tokens FCM:", fcmTokens.map(t => `${t.substring(0, 30)}...`));
+        console.log("  - Dados da notificação:", JSON.stringify(notificationData, null, 2));
 
         await sendPushToMultipleDevices(
           fcmTokens,
@@ -530,7 +540,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           notificationData
         );
 
-        console.log(`✅ Notificações push enviadas para ${fcmTokens.length} motorista(s)`);
+        console.log(`✓ Notificação enviada para ${fcmTokens.length} motoristas dentro do raio`);
       }
 
       return res.json({
@@ -1340,11 +1350,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
+      console.log("📝 Dados recebidos para salvar configurações:");
+      console.log("   autoCancelTimeout:", req.body.autoCancelTimeout, typeof req.body.autoCancelTimeout);
+      console.log("   driverAcceptanceTimeout:", req.body.driverAcceptanceTimeout, typeof req.body.driverAcceptanceTimeout);
+      console.log("   minTimeToFindDriver:", req.body.minTimeToFindDriver, typeof req.body.minTimeToFindDriver);
+
       // Validar dados
       const validatedData = insertSettingsSchema.parse(req.body);
+      console.log("✅ Dados validados:");
+      console.log("   autoCancelTimeout:", validatedData.autoCancelTimeout, typeof validatedData.autoCancelTimeout);
 
       // Atualizar ou criar configurações
       const settings = await storage.updateSettings(validatedData);
+      console.log("💾 Configurações salvas no banco:");
+      console.log("   autoCancelTimeout:", settings?.autoCancelTimeout, typeof settings?.autoCancelTimeout);
 
       if (!settings) {
         return res.status(500).json({ message: "Erro ao salvar configurações" });
@@ -1945,11 +1964,184 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
-      const deliveries = await storage.getCompanyTrips(req.session.companyId);
-      return res.json(deliveries);
+      // Usar SQL direto para evitar conversão de timezone do Drizzle
+      const { rows } = await pool.query(`
+        SELECT
+          r.id,
+          r.request_number AS "requestNumber",
+          r.customer_name AS "customerName",
+          r.created_at AS "createdAt",
+          r.driver_id AS "driverId",
+          r.is_driver_started AS "isDriverStarted",
+          r.is_driver_arrived AS "isDriverArrived",
+          r.is_trip_start AS "isTripStart",
+          r.is_completed AS "isCompleted",
+          r.is_cancelled AS "isCancelled",
+          r.cancel_reason AS "cancelReason",
+          r.cancelled_at AS "cancelledAt",
+          r.estimated_time AS "estimatedTime",
+          rp.pick_address AS "pickupAddress",
+          rp.drop_address AS "dropoffAddress",
+          rp.pick_lat AS "pickupLat",
+          rp.pick_lng AS "pickupLng",
+          rp.drop_lat AS "dropoffLat",
+          rp.drop_lng AS "dropoffLng",
+          rb.total_amount AS "totalPrice",
+          vt.name AS "vehicleTypeName",
+          d.name AS "driverName",
+          d.mobile AS "driverPhone",
+          CASE
+            WHEN r.is_cancelled = true THEN 'cancelled'
+            WHEN r.is_completed = true THEN 'completed'
+            WHEN r.is_driver_arrived = true AND r.is_trip_start = false THEN 'arrived_pickup'
+            WHEN r.is_trip_start = true AND r.is_completed = false THEN 'in_progress'
+            WHEN r.driver_id IS NOT NULL THEN 'accepted'
+            ELSE 'pending'
+          END AS status
+        FROM requests r
+        LEFT JOIN request_places rp ON r.id = rp.request_id
+        LEFT JOIN request_bills rb ON r.id = rb.request_id
+        LEFT JOIN vehicle_types vt ON r.zone_type_id = vt.id
+        LEFT JOIN drivers d ON r.driver_id = d.id
+        WHERE r.company_id = $1
+        ORDER BY r.created_at DESC
+      `, [req.session.companyId]);
+
+      return res.json(rows);
     } catch (error) {
       console.error("Erro ao listar entregas:", error);
       return res.status(500).json({ message: "Erro ao buscar entregas" });
+    }
+  });
+
+  // POST /api/empresa/calculate-price - Calcular preço da entrega
+  app.post("/api/empresa/calculate-price", async (req, res) => {
+    try {
+      if (!req.session.companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { vehicleTypeId, distanceKm, durationMinutes } = req.body;
+
+      if (!vehicleTypeId || distanceKm === undefined || durationMinutes === undefined) {
+        return res.status(400).json({
+          message: "vehicleTypeId, distanceKm e durationMinutes são obrigatórios"
+        });
+      }
+
+      // Buscar dados da empresa para pegar cidade/estado
+      const [company] = await db
+        .select({
+          city: companies.city,
+          state: companies.state,
+        })
+        .from(companies)
+        .where(eq(companies.id, req.session.companyId))
+        .limit(1);
+
+      if (!company || !company.city || !company.state) {
+        return res.status(400).json({
+          message: "Empresa não possui cidade/estado cadastrado"
+        });
+      }
+
+      // Buscar serviceLocation correspondente à cidade/estado da empresa
+      const [serviceLocation] = await db
+        .select({ id: serviceLocations.id })
+        .from(serviceLocations)
+        .where(
+          and(
+            eq(serviceLocations.name, company.city),
+            eq(serviceLocations.state, company.state)
+          )
+        )
+        .limit(1);
+
+      if (!serviceLocation) {
+        return res.status(400).json({
+          message: `Cidade ${company.city}/${company.state} não está cadastrada no sistema`
+        });
+      }
+
+      // Buscar configuração de preço
+      const [pricing] = await db
+        .select()
+        .from(cityPrices)
+        .where(
+          and(
+            eq(cityPrices.serviceLocationId, serviceLocation.id),
+            eq(cityPrices.vehicleTypeId, vehicleTypeId),
+            eq(cityPrices.active, true)
+          )
+        )
+        .limit(1);
+
+      if (!pricing) {
+        return res.status(400).json({
+          message: "Não há configuração de preço para esta categoria nesta cidade"
+        });
+      }
+
+      // Converter para números
+      const basePrice = parseFloat(pricing.basePrice);
+      const pricePerDistance = parseFloat(pricing.pricePerDistance);
+      const pricePerTime = parseFloat(pricing.pricePerTime);
+      const baseDistance = parseFloat(pricing.baseDistance);
+      const stopPrice = parseFloat(pricing.stopPrice || "0");
+      const returnPrice = parseFloat(pricing.returnPrice || "0");
+
+      // Calcular preço base
+      let totalPrice = basePrice;
+
+      // Calcular preço por distância (apenas se exceder a distância base)
+      const extraDistance = Math.max(0, distanceKm - baseDistance);
+      const distancePrice = extraDistance * pricePerDistance;
+      totalPrice += distancePrice;
+
+      // Calcular preço por tempo
+      const timePrice = durationMinutes * pricePerTime;
+      totalPrice += timePrice;
+
+      // Buscar comissão da tabela settings
+      const [systemSettings] = await db
+        .select({ adminCommissionPercentage: settings.adminCommissionPercentage })
+        .from(settings)
+        .limit(1);
+
+      const adminCommissionPercentage = systemSettings
+        ? parseFloat(systemSettings.adminCommissionPercentage)
+        : 20; // Fallback para 20% se não houver configuração
+
+      // Calcular comissão admin (sempre em porcentagem)
+      const adminCommission = totalPrice * (adminCommissionPercentage / 100);
+      const driverAmount = totalPrice - adminCommission;
+
+      // Retornar breakdown completo do preço
+      return res.json({
+        totalPrice: totalPrice.toFixed(2),
+        driverAmount: driverAmount.toFixed(2),
+        adminCommission: adminCommission.toFixed(2),
+        breakdown: {
+          basePrice: basePrice.toFixed(2),
+          baseDistance: baseDistance.toFixed(2),
+          distancePrice: distancePrice.toFixed(2),
+          pricePerKm: pricePerDistance.toFixed(2),
+          extraKm: extraDistance.toFixed(2),
+          timePrice: timePrice.toFixed(2),
+          pricePerMinute: pricePerTime.toFixed(2),
+          durationMinutes: durationMinutes,
+        },
+        pricing: {
+          stopPrice: stopPrice.toFixed(2),
+          returnPrice: returnPrice.toFixed(2),
+          cancellationFee: pricing.cancellationFee,
+          waitingChargePerMinute: pricing.waitingChargePerMinute,
+          freeWaitingTimeMins: pricing.freeWaitingTimeMins,
+        }
+      });
+    } catch (error) {
+      console.error("Erro ao calcular preço:", error);
+      return res.status(500).json({ message: "Erro ao calcular preço da entrega" });
     }
   });
 
@@ -1969,6 +2161,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         distance,
         estimatedTime,
         customerName,
+        customerWhatsapp,
+        deliveryReference,
       } = req.body;
 
       if (!pickupAddress || !dropoffAddress || !vehicleTypeId) {
@@ -1982,17 +2176,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const random = Math.floor(Math.random() * 1000);
       const requestNumber = `REQ-${timestamp}-${random}`;
 
+      // Buscar dados da empresa para pegar cidade/estado
+      const [company] = await db
+        .select({
+          city: companies.city,
+          state: companies.state,
+        })
+        .from(companies)
+        .where(eq(companies.id, req.session.companyId))
+        .limit(1);
+
+      if (!company || !company.city || !company.state) {
+        return res.status(400).json({
+          message: "Empresa não possui cidade/estado cadastrado"
+        });
+      }
+
+      // Buscar serviceLocation correspondente
+      const [serviceLocation] = await db
+        .select({ id: serviceLocations.id })
+        .from(serviceLocations)
+        .where(
+          and(
+            eq(serviceLocations.name, company.city),
+            eq(serviceLocations.state, company.state)
+          )
+        )
+        .limit(1);
+
+      if (!serviceLocation) {
+        return res.status(400).json({
+          message: `Cidade ${company.city}/${company.state} não está cadastrada no sistema`
+        });
+      }
+
+      // Buscar configuração de preço da city_prices
+      const [pricing] = await db
+        .select()
+        .from(cityPrices)
+        .where(
+          and(
+            eq(cityPrices.serviceLocationId, serviceLocation.id),
+            eq(cityPrices.vehicleTypeId, vehicleTypeId),
+            eq(cityPrices.active, true)
+          )
+        )
+        .limit(1);
+
+      if (!pricing) {
+        return res.status(400).json({
+          message: "Não há configuração de preço para esta categoria nesta cidade"
+        });
+      }
+
+      // Buscar comissão da tabela settings
+      const [systemSettings] = await db
+        .select({ adminCommissionPercentage: settings.adminCommissionPercentage })
+        .from(settings)
+        .limit(1);
+
+      const adminCommissionPercentage = systemSettings
+        ? parseFloat(systemSettings.adminCommissionPercentage)
+        : 20; // Fallback para 20% se não houver configuração
+
+      // Calcular comissão usando a configuração de settings
+      let driverAmount = null;
+      let adminCommission = null;
+      if (estimatedAmount) {
+        const totalAmount = parseFloat(estimatedAmount);
+        adminCommission = (totalAmount * (adminCommissionPercentage / 100)).toFixed(2);
+        driverAmount = (totalAmount - parseFloat(adminCommission)).toFixed(2);
+      }
+
       // Create request
       const request = await storage.createRequest({
         requestNumber,
         companyId: req.session.companyId,
         userId: null, // Company requests don't have userId
         customerName: customerName || null,
+        customerWhatsapp: customerWhatsapp || null,
+        deliveryReference: deliveryReference || null,
         serviceLocationId: serviceLocationId || null,
         zoneTypeId: vehicleTypeId,
         totalDistance: distance || null,
         totalTime: estimatedTime || null,
-        requestEtaAmount: estimatedAmount || null,
+        requestEtaAmount: driverAmount, // Valor líquido para o motorista (após comissão)
         isLater: false,
         isDriverStarted: false,
         isDriverArrived: false,
@@ -2018,10 +2286,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create request bill if amount is provided
       if (estimatedAmount) {
+        // Usar valores da configuração de pricing
+        const basePrice = parseFloat(pricing.basePrice);
+        const pricePerDistance = parseFloat(pricing.pricePerDistance);
+        const pricePerTime = parseFloat(pricing.pricePerTime);
+        const baseDistance = parseFloat(pricing.baseDistance);
+
+        const distanceInKm = distance ? parseFloat(distance) : 0;
+        const timeInMinutes = estimatedTime ? parseFloat(estimatedTime) : 0;
+
+        // Calcular preço por distância excedente
+        const extraDistance = Math.max(0, distanceInKm - baseDistance);
+        const distancePrice = extraDistance * pricePerDistance;
+
+        // Calcular preço por tempo
+        const timePrice = timeInMinutes * pricePerTime;
+
         await pool.query(
-          `INSERT INTO request_bills (request_id, total_amount)
-           VALUES ($1, $2)`,
-          [request.id, estimatedAmount]
+          `INSERT INTO request_bills (
+            request_id,
+            total_amount,
+            admin_commision,
+            base_price,
+            base_distance,
+            price_per_distance,
+            distance_price,
+            price_per_time,
+            time_price
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            request.id,
+            estimatedAmount,
+            adminCommission,
+            basePrice.toFixed(2),
+            baseDistance.toFixed(2),
+            pricePerDistance.toFixed(2),
+            distancePrice.toFixed(2),
+            pricePerTime.toFixed(2),
+            timePrice.toFixed(2)
+          ]
         );
       }
 
@@ -2048,18 +2352,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           AND longitude IS NOT NULL
       `);
 
-      // Buscar dados da empresa para incluir na notificação
-      const company = await storage.getCompany(req.session.companyId);
-
       // Filtrar motoristas dentro do raio de pesquisa
+      console.log('📦 pickupAddress recebido:', JSON.stringify(pickupAddress, null, 2));
+      console.log('📦 dropoffAddress recebido:', JSON.stringify(dropoffAddress, null, 2));
+
       const pickupLat = parseFloat(pickupAddress.lat);
       const pickupLng = parseFloat(pickupAddress.lng);
+
+      console.log(`📍 Local de retirada: ${pickupLat}, ${pickupLng}`);
+      console.log(`🔍 Raio configurado: ${searchRadius} km`);
+      console.log(`👥 Verificando ${availableDrivers.rows.length} motoristas disponíveis:`);
 
       const driversWithinRadius = availableDrivers.rows.filter(driver => {
         const driverLat = parseFloat(driver.latitude);
         const driverLng = parseFloat(driver.longitude);
 
         if (isNaN(driverLat) || isNaN(driverLng)) {
+          console.log(`  ⚠️  Motorista ${driver.name} (${driver.mobile}) - sem coordenadas válidas`);
           return false;
         }
 
@@ -2070,7 +2379,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           driverLng
         );
 
-        return distanceToPickup <= searchRadius;
+        const withinRadius = distanceToPickup <= searchRadius;
+        console.log(`  ${withinRadius ? '✅' : '❌'} Motorista ${driver.name} (${driver.mobile}) - Distância: ${distanceToPickup.toFixed(2)} km ${withinRadius ? '(DENTRO do raio)' : '(FORA do raio)'}`);
+
+        return withinRadius;
       });
 
       console.log(`✓ ${driversWithinRadius.length} de ${availableDrivers.rows.length} motoristas estão dentro do raio de ${searchRadius} km`);
@@ -2096,14 +2408,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
               requestNumber: requestNumber,
               pickupAddress: pickupAddress.address,
               dropoffAddress: dropoffAddress.address,
-              estimatedAmount: estimatedAmount?.toString() || "0",
+              estimatedAmount: driverAmount || "0", // Valor LÍQUIDO para o motorista (após comissão)
               distance: distance?.toString() || "0",
               estimatedTime: estimatedTime?.toString() || "0",
-              customerName: customerName || "",
+              companyName: company?.name || "", // Nome da empresa que solicitou a entrega
+              customerName: customerName || "", // Nome do cliente final (destinatário)
               acceptanceTimeout: driverAcceptanceTimeout.toString(), // Tempo para aceitar (segundos)
               searchTimeout: minTimeToFindDriver.toString(), // Tempo total de busca (segundos)
             }
           );
+
+          // Salvar notificações na tabela driver_notifications
+          const expiresAt = new Date(Date.now() + driverAcceptanceTimeout * 1000); // Tempo para aceitar
+          for (const driver of driversWithinRadius) {
+            await db.insert(driverNotifications).values({
+              requestId: request.id,
+              driverId: driver.id,
+              status: 'notified',
+              notifiedAt: new Date(),
+              expiresAt: expiresAt,
+            });
+          }
 
           console.log(`✓ Notificação enviada para ${fcmTokens.length} motoristas dentro do raio`);
         }
@@ -2173,6 +2498,235 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // POST /api/empresa/deliveries/:id/relaunch - Relançar entrega cancelada
+  app.post("/api/empresa/deliveries/:id/relaunch", async (req, res) => {
+    try {
+      if (!req.session.companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      // Buscar entrega original
+      const originalRequest = await storage.getRequest(id);
+
+      if (!originalRequest) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar se pertence à empresa
+      if (originalRequest.companyId !== req.session.companyId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      // Verificar se está cancelada
+      if (!originalRequest.isCancelled) {
+        return res.status(400).json({
+          message: "Apenas entregas canceladas podem ser relançadas"
+        });
+      }
+
+      // Buscar dados de endereços
+      const { rows: places } = await pool.query(
+        `SELECT * FROM request_places WHERE request_id = $1`,
+        [id]
+      );
+
+      if (!places || places.length === 0) {
+        return res.status(400).json({
+          message: "Dados de endereços não encontrados"
+        });
+      }
+
+      const place = places[0];
+
+      // Buscar dados de cobrança
+      const { rows: bills } = await pool.query(
+        `SELECT * FROM request_bills WHERE request_id = $1`,
+        [id]
+      );
+
+      // Generate novo request number
+      const timestamp = Date.now();
+      const random = Math.floor(Math.random() * 1000);
+      const requestNumber = `REQ-${timestamp}-${random}`;
+
+      // Calcular valor líquido para o motorista (após comissão)
+      let driverAmount = null;
+      let adminCommission = null;
+      if (bills && bills.length > 0) {
+        const bill = bills[0];
+        const settings = await storage.getSettings();
+        const adminCommissionPercentage = settings?.adminCommissionPercentage || 20;
+        const totalAmount = parseFloat(bill.total_amount);
+        adminCommission = (totalAmount * (adminCommissionPercentage / 100)).toFixed(2);
+        driverAmount = (totalAmount - parseFloat(adminCommission)).toFixed(2);
+      }
+
+      // Criar nova entrega
+      const newRequest = await storage.createRequest({
+        requestNumber,
+        companyId: req.session.companyId,
+        userId: null,
+        customerName: originalRequest.customerName,
+        serviceLocationId: originalRequest.serviceLocationId,
+        zoneTypeId: originalRequest.zoneTypeId,
+        totalDistance: originalRequest.totalDistance,
+        totalTime: originalRequest.totalTime,
+        requestEtaAmount: driverAmount,
+        isLater: false,
+        isDriverStarted: false,
+        isDriverArrived: false,
+        isTripStart: false,
+        isCompleted: false,
+        isCancelled: false,
+      });
+
+      // Criar request places
+      await pool.query(
+        `INSERT INTO request_places (id, request_id, pick_address, drop_address, pick_lat, pick_lng, drop_lat, drop_lng, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+        [
+          newRequest.id,
+          place.pick_address,
+          place.drop_address,
+          place.pick_lat,
+          place.pick_lng,
+          place.drop_lat,
+          place.drop_lng,
+        ]
+      );
+
+      // Criar request bill se houver
+      if (bills && bills.length > 0) {
+        const bill = bills[0];
+        await pool.query(
+          `INSERT INTO request_bills (
+            request_id,
+            total_amount,
+            admin_commision,
+            base_price,
+            base_distance,
+            price_per_distance,
+            distance_price,
+            price_per_time,
+            time_price
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            newRequest.id,
+            bill.total_amount,
+            adminCommission,
+            bill.base_price,
+            bill.base_distance,
+            bill.price_per_distance,
+            bill.distance_price,
+            bill.price_per_time,
+            bill.time_price
+          ]
+        );
+      }
+
+      // Buscar configurações de busca e timeout
+      const settingsResult = await pool.query(
+        `SELECT driver_search_radius, min_time_to_find_driver, driver_acceptance_timeout
+         FROM settings LIMIT 1`
+      );
+      const searchRadius = settingsResult.rows[0]?.driver_search_radius
+        ? parseFloat(settingsResult.rows[0].driver_search_radius)
+        : 10;
+      const minTimeToFindDriver = settingsResult.rows[0]?.min_time_to_find_driver || 120;
+      const driverAcceptanceTimeout = settingsResult.rows[0]?.driver_acceptance_timeout || 30;
+
+      // Buscar motoristas disponíveis
+      const availableDrivers = await pool.query(`
+        SELECT id, name, fcm_token, latitude, longitude
+        FROM drivers
+        WHERE available = true
+          AND approve = true
+          AND active = true
+          AND fcm_token IS NOT NULL
+          AND latitude IS NOT NULL
+          AND longitude IS NOT NULL
+      `);
+
+      // Buscar dados da empresa
+      const company = await storage.getCompany(req.session.companyId);
+
+      // Filtrar motoristas dentro do raio
+      const pickupLat = parseFloat(place.pick_lat);
+      const pickupLng = parseFloat(place.pick_lng);
+
+      console.log(`🔄 Relançando entrega #${originalRequest.requestNumber} como #${requestNumber}`);
+      console.log(`📍 Local de retirada: ${pickupLat}, ${pickupLng}`);
+      console.log(`🔍 Raio configurado: ${searchRadius} km`);
+
+      const driversWithinRadius = availableDrivers.rows.filter(driver => {
+        const driverLat = parseFloat(driver.latitude);
+        const driverLng = parseFloat(driver.longitude);
+
+        if (isNaN(driverLat) || isNaN(driverLng)) {
+          return false;
+        }
+
+        const distance = calculateDistance(
+          pickupLat,
+          pickupLng,
+          driverLat,
+          driverLng
+        );
+
+        return distance <= searchRadius;
+      });
+
+      console.log(`✅ ${driversWithinRadius.length} motoristas dentro do raio de ${searchRadius} km`);
+
+      // Enviar notificações
+      if (driversWithinRadius.length > 0) {
+        const notificationData = {
+          requestId: newRequest.id,
+          requestNumber: newRequest.requestNumber,
+          companyName: company?.name || 'Empresa',
+          customerName: newRequest.customerName || 'Cliente',
+          pickupAddress: place.pick_address,
+          dropoffAddress: place.drop_address,
+          distance: originalRequest.totalDistance?.toString() || '0',
+          estimatedAmount: bills && bills.length > 0 ? bills[0].total_amount : '0',
+          driverAmount: driverAmount || '0',
+          pickupLat: pickupLat.toString(),
+          pickupLng: pickupLng.toString(),
+          dropLat: place.drop_lat?.toString() || '0',
+          dropLng: place.drop_lng?.toString() || '0',
+        };
+
+        for (const driver of driversWithinRadius) {
+          await sendPushNotification({
+            token: driver.fcm_token,
+            title: '🚚 Nova Entrega Disponível!',
+            body: `De: ${place.pick_address.substring(0, 40)}...`,
+            data: notificationData,
+          });
+
+          await pool.query(
+            `INSERT INTO driver_notifications (id, driver_id, request_id, sent_at, accepted, expires_at)
+             VALUES (gen_random_uuid(), $1, $2, NOW(), false, NOW() + INTERVAL '${driverAcceptanceTimeout} seconds')`,
+            [driver.id, newRequest.id]
+          );
+        }
+
+        console.log(`📤 Notificações enviadas para ${driversWithinRadius.length} motoristas`);
+      }
+
+      return res.json({
+        message: "Entrega relançada com sucesso",
+        delivery: newRequest,
+      });
+    } catch (error) {
+      console.error("❌ Erro ao relançar entrega:", error);
+      return res.status(500).json({ message: "Erro ao relançar entrega" });
+    }
+  });
+
   // ========================================
   // DRIVER API ROUTES (Mobile App)
   // ========================================
@@ -2196,6 +2750,453 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Erro ao buscar cidades:", error);
       return res.status(500).json({ message: "Erro ao buscar cidades" });
+    }
+  });
+
+  // ============================================
+  // ADMIN DELIVERY ENDPOINTS
+  // ============================================
+
+  // GET /api/admin/deliveries/in-progress - Listar entregas em andamento
+  app.get("/api/admin/deliveries/in-progress", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { rows } = await pool.query(`
+        SELECT
+          r.id,
+          r.request_number AS "requestNumber",
+          r.customer_name AS "customerName",
+          r.created_at AS "createdAt",
+          r.driver_id AS "driverId",
+          r.is_driver_started AS "isDriverStarted",
+          r.is_driver_arrived AS "isDriverArrived",
+          r.is_trip_start AS "isTripStart",
+          r.is_completed AS "isCompleted",
+          r.is_cancelled AS "isCancelled",
+          r.cancel_reason AS "cancelReason",
+          rp.pick_address AS "pickupAddress",
+          rp.drop_address AS "dropoffAddress",
+          rb.total_amount AS "totalPrice",
+          vt.name AS "vehicleTypeName",
+          c.name AS "companyName",
+          d.name AS "driverName",
+          CASE
+            WHEN r.is_driver_arrived = true AND r.is_trip_start = false THEN 'arrived_pickup'
+            WHEN r.is_trip_start = true AND r.is_completed = false THEN 'in_progress'
+            WHEN r.driver_id IS NOT NULL THEN 'accepted'
+            ELSE 'pending'
+          END AS status
+        FROM requests r
+        LEFT JOIN request_places rp ON r.id = rp.request_id
+        LEFT JOIN request_bills rb ON r.id = rb.request_id
+        LEFT JOIN vehicle_types vt ON r.zone_type_id = vt.id
+        LEFT JOIN companies c ON r.company_id = c.id
+        LEFT JOIN drivers d ON r.driver_id = d.id
+        WHERE r.is_cancelled = false
+          AND r.is_completed = false
+        ORDER BY r.created_at DESC
+      `);
+
+      return res.json(rows);
+    } catch (error) {
+      console.error("Erro ao listar entregas em andamento:", error);
+      return res.status(500).json({ message: "Erro ao buscar entregas" });
+    }
+  });
+
+  // GET /api/admin/deliveries/cancelled - Listar entregas canceladas
+  app.get("/api/admin/deliveries/cancelled", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { rows } = await pool.query(`
+        SELECT
+          r.id,
+          r.request_number AS "requestNumber",
+          r.customer_name AS "customerName",
+          r.created_at AS "createdAt",
+          r.cancelled_at AS "cancelledAt",
+          r.is_cancelled AS "isCancelled",
+          r.cancel_reason AS "cancelReason",
+          rp.pick_address AS "pickupAddress",
+          rp.drop_address AS "dropoffAddress",
+          rb.total_amount AS "totalPrice",
+          vt.name AS "vehicleTypeName",
+          c.name AS "companyName",
+          'cancelled' AS status
+        FROM requests r
+        LEFT JOIN request_places rp ON r.id = rp.request_id
+        LEFT JOIN request_bills rb ON r.id = rb.request_id
+        LEFT JOIN vehicle_types vt ON r.zone_type_id = vt.id
+        LEFT JOIN companies c ON r.company_id = c.id
+        WHERE r.is_cancelled = true
+        ORDER BY r.cancelled_at DESC NULLS LAST, r.created_at DESC
+      `);
+
+      console.log(`📋 Entregas canceladas retornadas: ${rows.length}`);
+      return res.json(rows);
+    } catch (error) {
+      console.error("Erro ao listar entregas canceladas:", error);
+      return res.status(500).json({ message: "Erro ao buscar entregas" });
+    }
+  });
+
+  // POST /api/admin/deliveries/:id/cancel - Cancelar entrega (Admin)
+  app.post("/api/admin/deliveries/:id/cancel", async (req, res) => {
+    try {
+      if (!req.session.userId || !req.session.isAdmin) {
+        return res.status(401).json({ message: "Acesso negado. Apenas administradores podem cancelar entregas." });
+      }
+
+      const { id } = req.params;
+      const { cancelReason } = req.body;
+
+      // Buscar entrega
+      const request = await storage.getRequest(id);
+
+      if (!request) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar se já está cancelada
+      if (request.isCancelled) {
+        return res.status(400).json({ message: "Esta entrega já está cancelada" });
+      }
+
+      // Verificar se já foi completada
+      if (request.isCompleted) {
+        return res.status(400).json({ message: "Não é possível cancelar uma entrega já completada" });
+      }
+
+      // Cancelar a entrega e salvar observações
+      await pool.query(
+        `UPDATE requests SET is_cancelled = true, cancelled_at = NOW(), cancel_reason = $2, cancel_method = 'admin' WHERE id = $1`,
+        [id, cancelReason || null]
+      );
+
+      // Se havia um motorista, notificar via Firebase
+      if (request.driverId) {
+        // Buscar dados do motorista para obter o FCM token
+        const driver = await storage.getDriver(request.driverId);
+
+        if (driver && driver.fcmToken) {
+          // Enviar notificação push via Firebase
+          await sendPushNotification(
+            driver.fcmToken,
+            "Entrega Cancelada",
+            "A entrega foi cancelada pelo administrador.",
+            {
+              type: "DELIVERY_CANCELLED",
+              requestId: id,
+              message: cancelReason || "Esta entrega foi cancelada pelo administrador"
+            }
+          );
+
+          console.log(`📱 Notificação Firebase enviada ao motorista ${driver.name} sobre cancelamento da entrega ${id}`);
+        } else {
+          console.warn(`⚠️  Motorista ${request.driverId} não possui FCM token registrado`);
+        }
+
+        // Também enviar via Socket.IO como fallback
+        io.emit(`delivery_cancelled_${request.driverId}`, {
+          requestId: id,
+          message: "Esta entrega foi cancelada pelo administrador"
+        });
+      }
+
+      console.log(`❌ Entrega ${id} cancelada pelo admin ${req.session.userName}`);
+
+      return res.json({
+        message: "Entrega cancelada com sucesso",
+        requestId: id
+      });
+    } catch (error) {
+      console.error("Erro ao cancelar entrega:", error);
+      return res.status(500).json({ message: "Erro ao cancelar entrega" });
+    }
+  });
+
+  // POST /api/admin/deliveries/:id/force-cancel-notification - Forçar notificação de cancelamento (Admin)
+  app.post("/api/admin/deliveries/:id/force-cancel-notification", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      // Buscar entrega
+      const request = await storage.getRequest(id);
+
+      if (!request) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar se está cancelada
+      if (!request.isCancelled) {
+        return res.status(400).json({
+          message: "Esta entrega não está cancelada. Use o endpoint de cancelamento normal."
+        });
+      }
+
+      // Verificar se tinha motorista atribuído
+      if (!request.driverId) {
+        return res.status(400).json({
+          message: "Esta entrega não tinha motorista atribuído."
+        });
+      }
+
+      // Buscar dados do motorista para obter o FCM token
+      const driver = await storage.getDriver(request.driverId);
+
+      if (!driver) {
+        return res.status(404).json({ message: "Motorista não encontrado" });
+      }
+
+      let notificationSent = false;
+
+      // Enviar notificação push via Firebase se o motorista tiver FCM token
+      if (driver.fcmToken) {
+        const result = await sendPushNotification(
+          driver.fcmToken,
+          "Entrega Cancelada",
+          "Esta entrega foi cancelada pelo administrador.",
+          {
+            type: "DELIVERY_CANCELLED",
+            requestId: id,
+            message: request.cancelReason || "Esta entrega foi cancelada pelo administrador"
+          }
+        );
+
+        if (result) {
+          notificationSent = true;
+          console.log(`📱 Notificação Firebase FORÇADA enviada ao motorista ${driver.name} sobre cancelamento da entrega ${id}`);
+        }
+      } else {
+        console.warn(`⚠️  Motorista ${driver.name} não possui FCM token registrado`);
+      }
+
+      // Também enviar via Socket.IO como fallback
+      io.emit(`delivery_cancelled_${request.driverId}`, {
+        requestId: id,
+        message: request.cancelReason || "Esta entrega foi cancelada pelo administrador"
+      });
+
+      console.log(`🔔 Socket.IO enviado para delivery_cancelled_${request.driverId}`);
+
+      return res.json({
+        message: notificationSent
+          ? "Notificação de cancelamento enviada com sucesso via Firebase e Socket.IO"
+          : "Notificação enviada via Socket.IO (motorista sem FCM token)",
+        requestId: id,
+        driverId: request.driverId,
+        driverName: driver.name,
+        fcmTokenPresent: !!driver.fcmToken,
+        firebaseNotificationSent: notificationSent
+      });
+    } catch (error) {
+      console.error("Erro ao enviar notificação de cancelamento:", error);
+      return res.status(500).json({ message: "Erro ao enviar notificação de cancelamento" });
+    }
+  });
+
+  // POST /api/admin/deliveries/:id/relaunch - Relançar entrega cancelada (Admin)
+  app.post("/api/admin/deliveries/:id/relaunch", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      // Buscar entrega original
+      const originalRequest = await storage.getRequest(id);
+
+      if (!originalRequest) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar se está cancelada
+      if (!originalRequest.isCancelled) {
+        return res.status(400).json({
+          message: "Apenas entregas canceladas podem ser relançadas"
+        });
+      }
+
+      // Buscar dados de endereços
+      const { rows: places } = await pool.query(
+        `SELECT * FROM request_places WHERE request_id = $1`,
+        [id]
+      );
+
+      if (!places || places.length === 0) {
+        return res.status(400).json({
+          message: "Dados de endereços não encontrados"
+        });
+      }
+
+      const place = places[0];
+
+      // Buscar dados de cobrança
+      const { rows: bills } = await pool.query(
+        `SELECT * FROM request_bills WHERE request_id = $1`,
+        [id]
+      );
+
+      // Generate novo request number
+      const timestamp = Date.now();
+      const random = Math.floor(Math.random() * 1000);
+      const requestNumber = `REQ-${timestamp}-${random}`;
+
+      // Calcular valor líquido para o motorista (após comissão)
+      let driverAmount = null;
+      let adminCommission = null;
+      if (bills && bills.length > 0) {
+        const bill = bills[0];
+        const settings = await storage.getSettings();
+        const adminCommissionPercentage = settings?.adminCommissionPercentage || 20;
+        const totalAmount = parseFloat(bill.total_amount);
+        adminCommission = (totalAmount * (adminCommissionPercentage / 100)).toFixed(2);
+        driverAmount = (totalAmount - parseFloat(adminCommission)).toFixed(2);
+      }
+
+      // Criar nova entrega
+      const newRequest = await storage.createRequest({
+        requestNumber,
+        companyId: originalRequest.companyId,
+        userId: null,
+        customerName: originalRequest.customerName,
+        serviceLocationId: originalRequest.serviceLocationId,
+        zoneTypeId: originalRequest.zoneTypeId,
+        totalDistance: originalRequest.totalDistance,
+        totalTime: originalRequest.totalTime,
+        requestEtaAmount: driverAmount,
+        isLater: false,
+        isDriverStarted: false,
+        isDriverArrived: false,
+        isTripStart: false,
+        isCompleted: false,
+        isCancelled: false,
+      });
+
+      // Criar request places
+      await pool.query(
+        `INSERT INTO request_places (id, request_id, pick_address, drop_address, pick_lat, pick_lng, drop_lat, drop_lng, created_at, updated_at)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+        [
+          newRequest.id,
+          place.pick_address,
+          place.drop_address,
+          place.pick_lat,
+          place.pick_lng,
+          place.drop_lat,
+          place.drop_lng,
+        ]
+      );
+
+      // Criar request bill se houver
+      if (bills && bills.length > 0) {
+        const bill = bills[0];
+        await pool.query(
+          `INSERT INTO request_bills (id, request_id, base_price, distance_price, time_price, total_amount, admin_commission, driver_amount, created_at, updated_at)
+           VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+          [
+            newRequest.id,
+            bill.base_price,
+            bill.distance_price,
+            bill.time_price,
+            bill.total_amount,
+            adminCommission,
+            driverAmount,
+          ]
+        );
+      }
+
+      // Buscar configurações de raio
+      const settingsResult = await pool.query(
+        `SELECT driver_search_radius, min_time_to_find_driver, driver_acceptance_timeout FROM settings LIMIT 1`
+      );
+      const searchRadius = settingsResult.rows[0]?.driver_search_radius
+        ? parseFloat(settingsResult.rows[0].driver_search_radius)
+        : 10;
+
+      // Buscar motoristas disponíveis
+      const availableDrivers = await pool.query(`
+        SELECT id, name, fcm_token, latitude, longitude
+        FROM drivers
+        WHERE available = true
+          AND approve = true
+          AND active = true
+          AND fcm_token IS NOT NULL
+          AND latitude IS NOT NULL
+          AND longitude IS NOT NULL
+      `);
+
+      // Buscar dados da empresa se houver
+      let company = null;
+      if (originalRequest.companyId) {
+        company = await storage.getCompany(originalRequest.companyId);
+      }
+
+      // Filtrar motoristas dentro do raio
+      const pickupLat = parseFloat(place.pick_lat);
+      const pickupLng = parseFloat(place.pick_lng);
+
+      console.log(`🔄 Relançando entrega #${originalRequest.requestNumber} como #${requestNumber} (Admin)`);
+      console.log(`📍 Local de retirada: ${pickupLat}, ${pickupLng}`);
+      console.log(`🔍 Raio configurado: ${searchRadius} km`);
+
+      const driversWithinRadius = availableDrivers.rows.filter(driver => {
+        const driverLat = parseFloat(driver.latitude);
+        const driverLng = parseFloat(driver.longitude);
+
+        if (isNaN(driverLat) || isNaN(driverLng)) {
+          return false;
+        }
+
+        const distance = calculateDistance(
+          pickupLat,
+          pickupLng,
+          driverLat,
+          driverLng
+        );
+
+        return distance <= searchRadius;
+      });
+
+      console.log(`✅ ${driversWithinRadius.length} motoristas dentro do raio de ${searchRadius} km`);
+
+      // Enviar notificações para motoristas próximos
+      if (driversWithinRadius.length > 0) {
+        const notificationPromises = driversWithinRadius.map(driver =>
+          sendPushNotification(
+            driver.fcm_token,
+            "Nova corrida disponível!",
+            company
+              ? `${company.fantasyName} solicitou uma corrida`
+              : "Nova corrida solicitada",
+            { requestId: newRequest.id, type: "new_request" }
+          )
+        );
+
+        await Promise.all(notificationPromises);
+        console.log(`📢 Notificações enviadas para ${driversWithinRadius.length} motoristas`);
+      }
+
+      return res.json({
+        message: "Entrega relançada com sucesso",
+        requestId: newRequest.id,
+        requestNumber: newRequest.requestNumber,
+        driversNotified: driversWithinRadius.length
+      });
+    } catch (error) {
+      console.error("❌ Erro ao relançar entrega:", error);
+      return res.status(500).json({ message: "Erro ao relançar entrega" });
     }
   });
 
@@ -2624,119 +3625,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
-      // Buscar motorista com JOINs para pegar os nomes
+      // Debug: Verificar se as tabelas estão definidas
+      console.log("📋 Verificando imports das tabelas:");
+      console.log("drivers:", typeof drivers, drivers ? "✓" : "✗");
+      console.log("serviceLocations:", typeof serviceLocations, serviceLocations ? "✓" : "✗");
+      console.log("vehicleTypes:", typeof vehicleTypes, vehicleTypes ? "✓" : "✗");
+      console.log("brands:", typeof brands, brands ? "✓" : "✗");
+      console.log("vehicleModels:", typeof vehicleModels, vehicleModels ? "✓" : "✗");
+
+      // Buscar motorista - query simplificada para debug
+      console.log("🔍 Tentando buscar motorista...");
       const [driver] = await db
-        .select({
-          id: drivers.id,
-          name: drivers.name,
-          mobile: drivers.mobile,
-          email: drivers.email,
-          cpf: drivers.cpf,
-          profilePicture: drivers.profilePicture,
-          active: drivers.active,
-          approve: drivers.approve,
-          available: drivers.available,
-          rating: drivers.rating,
-          ratingTotal: drivers.ratingTotal,
-          noOfRatings: drivers.noOfRatings,
-
-          // IDs
-          serviceLocationId: drivers.serviceLocationId,
-          vehicleTypeId: drivers.vehicleTypeId,
-          carMakeId: drivers.carMake,
-          carModelId: drivers.carModel,
-
-          // Dados do carro
-          carNumber: drivers.carNumber,
-          carColor: drivers.carColor,
-          carYear: drivers.carYear,
-
-          // Nomes das relações
-          cityName: serviceLocations.name,
-          cityState: serviceLocations.state,
-          vehicleTypeName: vehicleTypes.name,
-          brandName: brands.name,
-          modelName: models.name,
-        })
+        .select()
         .from(drivers)
-        .leftJoin(serviceLocations, eq(drivers.serviceLocationId, serviceLocations.id))
-        .leftJoin(vehicleTypes, eq(drivers.vehicleTypeId, vehicleTypes.id))
-        .leftJoin(brands, eq(drivers.carMake, brands.id))
-        .leftJoin(models, eq(drivers.carModel, models.id))
         .where(eq(drivers.id, driverId))
         .limit(1);
+
+      console.log("✅ Motorista encontrado:", driver ? "SIM" : "NÃO");
 
       if (!driver) {
         return res.status(404).json({ message: "Motorista não encontrado" });
       }
 
-      // Buscar documentos do motorista
+      // Buscar documentos do motorista - query simplificada
+      console.log("📄 Tentando buscar documentos...");
       const documents = await db
-        .select({
-          id: driverDocuments.id,
-          documentTypeId: driverDocuments.documentTypeId,
-          documentTypeName: driverDocumentTypes.name,
-          filePath: driverDocuments.filePath,
-          status: driverDocuments.status,
-          uploadedAt: driverDocuments.uploadedAt,
-        })
+        .select()
         .from(driverDocuments)
-        .innerJoin(driverDocumentTypes, eq(driverDocuments.documentTypeId, driverDocumentTypes.id))
-        .where(eq(driverDocuments.driverId, driverId))
-        .orderBy(driverDocuments.uploadedAt);
+        .where(eq(driverDocuments.driverId, driverId));
+
+      console.log("📄 Documentos encontrados:", documents?.length || 0);
 
       return res.json({
         success: true,
-        data: {
-          // Dados pessoais
-          personalData: {
-            id: driver.id,
-            fullName: driver.name,
-            cpf: driver.cpf,
-            email: driver.email,
-            whatsapp: driver.mobile,
-            city: driver.cityName ? `${driver.cityName} - ${driver.cityState}` : null,
-            cityId: driver.serviceLocationId,
-            profilePicture: driver.profilePicture,
-          },
-
-          // Dados do veículo
-          vehicleData: {
-            category: driver.vehicleTypeName,
-            categoryId: driver.vehicleTypeId,
-            brand: driver.brandName,
-            brandId: driver.carMakeId,
-            model: driver.modelName,
-            modelId: driver.carModelId,
-            plate: driver.carNumber,
-            color: driver.carColor,
-            year: driver.carYear,
-          },
-
-          // Status
-          status: {
-            active: driver.active,
-            approved: driver.approve,
-            available: driver.available,
-          },
-
-          // Rating
-          rating: {
-            average: driver.rating,
-            total: driver.ratingTotal,
-            count: driver.noOfRatings,
-          },
-
-          // Documentos
-          documents: documents.map(doc => ({
-            id: doc.id,
-            documentTypeId: doc.documentTypeId,
-            documentType: doc.documentTypeName,
-            filePath: doc.filePath,
-            status: doc.status,
-            uploadedAt: doc.uploadedAt,
-          })),
-        }
+        data: driver, // Retornando dados simplificados para teste
       });
     } catch (error) {
       console.error("Erro ao buscar perfil completo do motorista:", error);
@@ -3026,6 +3948,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           expiresAt: driverNotifications.expiresAt,
           companyId: requests.companyId,
           customerName: requests.customerName,
+          customerWhatsapp: requests.customerWhatsapp,
+          deliveryReference: requests.deliveryReference,
           zoneTypeId: requests.zoneTypeId,
           notes: requests.notes,
         })
@@ -3042,6 +3966,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Buscar detalhes completos de cada solicitação
       const pendingRequests = await Promise.all(
         notifications.map(async (notification) => {
+          // Buscar dados da solicitação (request)
+          const [request] = await db
+            .select({
+              totalDistance: requests.totalDistance,
+              totalTime: requests.totalTime,
+              estimatedTime: requests.estimatedTime,
+            })
+            .from(requests)
+            .where(eq(requests.id, notification.requestId))
+            .limit(1);
+
           // Buscar dados da empresa
           const [company] = await db
             .select({
@@ -3065,24 +4000,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .where(eq(requestBills.requestId, notification.requestId))
             .limit(1);
 
-          if (!place) {
+          if (!place || !request) {
             return null;
           }
 
-          // Calcular distância e tempo
-          const distance = calculateDistance(
-            parseFloat(place.pickLat),
-            parseFloat(place.pickLng),
-            parseFloat(place.dropLat),
-            parseFloat(place.dropLng)
-          );
-          const estimatedTime = Math.ceil((distance / 40) * 60);
+          // Usar distância e tempo do Google Maps (salvos no banco)
+          const distanceInKm = request.totalDistance
+            ? (parseFloat(request.totalDistance) / 1000).toFixed(2)
+            : "0";
+          const timeInMinutes = request.totalTime || "0";
 
-          // Calcular valor do motorista
-          const settings = await storage.getSettings();
-          const adminCommissionPercentage = settings?.adminCommissionPercentage || 20;
-          const totalAmount = bill ? parseFloat(bill.basePrice) + parseFloat(bill.distancePrice) : 0;
-          const adminCommission = totalAmount * (adminCommissionPercentage / 100);
+          // Obter valores da bill (já inclui comissão calculada)
+          const totalAmount = bill ? parseFloat(bill.totalAmount) : 0;
+          const adminCommission = bill ? parseFloat(bill.adminCommision) : 0;
           const driverAmount = totalAmount - adminCommission;
 
           return {
@@ -3091,15 +4021,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             requestNumber: notification.requestNumber,
             companyName: company?.name || "Empresa",
             customerName: notification.customerName,
+            customerWhatsapp: notification.customerWhatsapp,
+            deliveryReference: notification.deliveryReference,
             pickupAddress: place.pickAddress,
             pickupLat: parseFloat(place.pickLat),
             pickupLng: parseFloat(place.pickLng),
             deliveryAddress: place.dropAddress,
             deliveryLat: parseFloat(place.dropLat),
             deliveryLng: parseFloat(place.dropLng),
-            distance: distance.toFixed(2),
-            estimatedTime: estimatedTime.toString(),
+            distance: distanceInKm,
+            estimatedTime: timeInMinutes,
+            totalAmount: totalAmount.toFixed(2),
             driverAmount: driverAmount.toFixed(2),
+            adminCommission: adminCommission.toFixed(2),
             notes: notification.notes,
             expiresAt: notification.expiresAt?.toISOString(),
             status: notification.status,
@@ -3125,13 +4059,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/v1/driver/requests/:id/accept - Aceitar solicitação
   app.post("/api/v1/driver/requests/:id/accept", async (req, res) => {
     try {
-      if (!req.session.driverId) {
+      // Permitir autenticação via sessão OU Bearer token
+      let driverId = req.session.driverId;
+
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Erro ao decodificar token:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
       const requestId = req.params.id;
-      const driverId = req.session.driverId;
-
       console.log(`✅ Motorista ${driverId} aceitando solicitação ${requestId}`);
 
       // Verificar se a solicitação ainda está disponível
@@ -3184,14 +4134,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Calcular previsão: tempo do Google Maps + 5 minutos de margem
+      const googleMapsTime = request.totalTime ? parseFloat(request.totalTime) : 0;
+      const estimatedTimeWithMargin = googleMapsTime + 5;
+
       // Atualizar a solicitação com o motorista
       await db
         .update(requests)
         .set({
           driverId: driverId,
           acceptedAt: new Date(),
+          isDriverStarted: true, // Marcar como aceito para o status visual
+          estimatedTime: estimatedTimeWithMargin.toString(), // Google Maps + 5 min
         })
         .where(eq(requests.id, requestId));
+
+      // Atualizar status do motorista para "em entrega" (marcador vermelho no mapa)
+      await db
+        .update(drivers)
+        .set({ onDelivery: true })
+        .where(eq(drivers.id, driverId));
 
       // Atualizar a notificação do motorista como aceita
       await db
@@ -3277,11 +4239,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const estimatedTime = Math.ceil((distance / 40) * 60);
 
-      const settings = await storage.getSettings();
-      const adminCommissionPercentage = settings?.adminCommissionPercentage || 20;
-      const totalAmount = bill ? parseFloat(bill.basePrice) + parseFloat(bill.distancePrice) : 0;
-      const adminCommission = totalAmount * (adminCommissionPercentage / 100);
-      const driverAmount = totalAmount - adminCommission;
+      // Usar valor já calculado de requestEtaAmount (valor líquido para o motorista)
+      const driverAmount = request.requestEtaAmount ? parseFloat(request.requestEtaAmount) : 0;
+
+      // Buscar dados da empresa
+      const company = request.companyId ? await storage.getCompany(request.companyId) : null;
 
       return res.json({
         success: true,
@@ -3289,6 +4251,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         data: {
           requestId: request.id,
           requestNumber: request.requestNumber,
+          companyName: company?.name || null, // Nome da empresa
+          companyPhone: company?.phone || null, // Telefone da empresa
+          customerName: request.customerName || null, // Nome do cliente final
           pickupAddress: place?.pickAddress,
           pickupLat: place ? parseFloat(place.pickLat) : null,
           pickupLng: place ? parseFloat(place.pickLng) : null,
@@ -3436,6 +4401,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Erro ao atualizar localização:", error);
       return res.status(500).json({ message: "Erro ao atualizar localização" });
+    }
+  });
+
+  // POST /api/v1/driver/update-fcm-token - Atualizar token FCM do motorista
+  app.post("/api/v1/driver/update-fcm-token", async (req, res) => {
+    try {
+      // Permitir autenticação via sessão OU Bearer token
+      let driverId = req.session.driverId;
+
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Erro ao decodificar token:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { fcmToken } = req.body;
+
+      if (!fcmToken) {
+        return res.status(400).json({
+          message: "Token FCM é obrigatório"
+        });
+      }
+
+      // Atualizar token FCM no banco
+      await db.update(drivers)
+        .set({ fcmToken: fcmToken })
+        .where(eq(drivers.id, driverId));
+
+      console.log(`🔔 Token FCM atualizado para motorista ${driverId}`);
+
+      return res.json({
+        success: true,
+        message: "Token FCM atualizado com sucesso"
+      });
+    } catch (error) {
+      console.error("Erro ao atualizar token FCM:", error);
+      return res.status(500).json({ message: "Erro ao atualizar token FCM" });
     }
   });
 
@@ -3777,11 +4792,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Esta entrega já foi aceita por outro motorista" });
       }
 
+      // Calcular previsão: tempo do Google Maps + 5 minutos de margem
+      const googleMapsTime = request.totalTime ? parseFloat(request.totalTime) : 0;
+      const estimatedTimeWithMargin = googleMapsTime + 5;
+
       // Atualiza entrega com motorista e status
       await storage.updateRequest(deliveryId, {
         driverId: req.session.driverId,
         isDriverStarted: true,
         acceptedAt: new Date(),
+        estimatedTime: estimatedTimeWithMargin.toString(), // Google Maps + 5 min
       });
 
       // Busca dados do motorista
@@ -3846,25 +4866,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/v1/driver/deliveries/:id/arrived-pickup - Motorista chegou para retirada
   app.post("/api/v1/driver/deliveries/:id/arrived-pickup", async (req, res) => {
     try {
-      if (!req.session.driverId) {
-        return res.status(401).json({ message: "Não autenticado" });
+      let driverId = req.session.driverId;
+
+      // Se não tiver sessão, tenta obter do token Bearer
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Token inválido:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
+        console.error("❌ Tentativa de atualizar status sem autenticação");
+        return res.status(401).json({
+          success: false,
+          message: "Não autenticado"
+        });
       }
 
       const deliveryId = req.params.id;
 
-      const request = await storage.getRequest(deliveryId);
-      if (!request) {
-        return res.status(404).json({ message: "Entrega não encontrada" });
+      // Validar que o ID foi fornecido
+      if (!deliveryId || deliveryId.trim() === '') {
+        console.error("❌ ID da entrega não fornecido");
+        return res.status(400).json({
+          success: false,
+          message: "ID da entrega não fornecido"
+        });
       }
 
-      if (request.driverId !== req.session.driverId) {
-        return res.status(403).json({ message: "Esta entrega não pertence a você" });
+      console.log(`📍 Motorista ${driverId} chegou no local de retirada da entrega ${deliveryId}`);
+
+      const request = await storage.getRequest(deliveryId);
+      if (!request) {
+        console.error(`❌ Entrega ${deliveryId} não encontrada`);
+        return res.status(404).json({
+          success: false,
+          message: "Entrega não encontrada"
+        });
+      }
+
+      if (request.driverId !== driverId) {
+        console.error(`❌ Entrega ${deliveryId} não pertence ao motorista ${driverId}`);
+        return res.status(403).json({
+          success: false,
+          message: "Esta entrega não pertence a você"
+        });
       }
 
       await storage.updateRequest(deliveryId, {
         isDriverArrived: true,
         arrivedAt: new Date(),
       });
+
+      console.log(`✅ Status atualizado: motorista chegou para retirada`);
 
       // Emitir evento via Socket.IO
       const io = (app as any).io;
@@ -3880,36 +4943,82 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json({
         success: true,
         message: "Status atualizado",
-        data: { status: "arrived-pickup" }
+        data: { status: "Chegou no local" }
       });
     } catch (error) {
-      console.error("Erro ao atualizar status:", error);
-      return res.status(500).json({ message: "Erro ao atualizar status" });
+      console.error("❌ Erro ao atualizar status (arrived-pickup):", error);
+      return res.status(500).json({
+        success: false,
+        message: "Erro ao atualizar status"
+      });
     }
   });
 
   // POST /api/v1/driver/deliveries/:id/picked-up - Motorista retirou o pedido
   app.post("/api/v1/driver/deliveries/:id/picked-up", async (req, res) => {
     try {
-      if (!req.session.driverId) {
-        return res.status(401).json({ message: "Não autenticado" });
+      let driverId = req.session.driverId;
+
+      // Se não tiver sessão, tenta obter do token Bearer
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Token inválido:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
+        console.error("❌ Tentativa de atualizar status sem autenticação");
+        return res.status(401).json({
+          success: false,
+          message: "Não autenticado"
+        });
       }
 
       const deliveryId = req.params.id;
 
-      const request = await storage.getRequest(deliveryId);
-      if (!request) {
-        return res.status(404).json({ message: "Entrega não encontrada" });
+      // Validar que o ID foi fornecido
+      if (!deliveryId || deliveryId.trim() === '') {
+        console.error("❌ ID da entrega não fornecido");
+        return res.status(400).json({
+          success: false,
+          message: "ID da entrega não fornecido"
+        });
       }
 
-      if (request.driverId !== req.session.driverId) {
-        return res.status(403).json({ message: "Esta entrega não pertence a você" });
+      console.log(`📦 Motorista ${driverId} retirou o pedido da entrega ${deliveryId}`);
+
+      const request = await storage.getRequest(deliveryId);
+      if (!request) {
+        console.error(`❌ Entrega ${deliveryId} não encontrada`);
+        return res.status(404).json({
+          success: false,
+          message: "Entrega não encontrada"
+        });
+      }
+
+      if (request.driverId !== driverId) {
+        console.error(`❌ Entrega ${deliveryId} não pertence ao motorista ${driverId}`);
+        return res.status(403).json({
+          success: false,
+          message: "Esta entrega não pertence a você"
+        });
       }
 
       await storage.updateRequest(deliveryId, {
         isTripStart: true,
         tripStartedAt: new Date(),
       });
+
+      console.log(`✅ Status atualizado: pedido retirado`);
 
       // Emitir evento via Socket.IO
       const io = (app as any).io;
@@ -3925,7 +5034,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json({
         success: true,
         message: "Status atualizado",
-        data: { status: "picked-up" }
+        data: { status: "Retirado" }
       });
     } catch (error) {
       console.error("Erro ao atualizar status:", error);
@@ -3936,20 +5045,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // POST /api/v1/driver/deliveries/:id/delivered - Pedido entregue
   app.post("/api/v1/driver/deliveries/:id/delivered", async (req, res) => {
     try {
-      if (!req.session.driverId) {
-        return res.status(401).json({ message: "Não autenticado" });
+      let driverId = req.session.driverId;
+
+      // Se não tiver sessão, tenta obter do token Bearer
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Token inválido:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
+        console.error("❌ Tentativa de atualizar status sem autenticação");
+        return res.status(401).json({
+          success: false,
+          message: "Não autenticado"
+        });
       }
 
       const deliveryId = req.params.id;
 
-      const request = await storage.getRequest(deliveryId);
-      if (!request) {
-        return res.status(404).json({ message: "Entrega não encontrada" });
+      // Validar que o ID foi fornecido
+      if (!deliveryId || deliveryId.trim() === '') {
+        console.error("❌ ID da entrega não fornecido");
+        return res.status(400).json({
+          success: false,
+          message: "ID da entrega não fornecido"
+        });
       }
 
-      if (request.driverId !== req.session.driverId) {
-        return res.status(403).json({ message: "Esta entrega não pertence a você" });
+      console.log(`✅ Motorista ${driverId} entregou o pedido da entrega ${deliveryId}`);
+
+      const request = await storage.getRequest(deliveryId);
+      if (!request) {
+        console.error(`❌ Entrega ${deliveryId} não encontrada`);
+        return res.status(404).json({
+          success: false,
+          message: "Entrega não encontrada"
+        });
       }
+
+      if (request.driverId !== driverId) {
+        console.error(`❌ Entrega ${deliveryId} não pertence ao motorista ${driverId}`);
+        return res.status(403).json({
+          success: false,
+          message: "Esta entrega não pertence a você"
+        });
+      }
+
+      await storage.updateRequest(deliveryId, {
+        isCompleted: true,
+        completedAt: new Date(),
+      });
+
+      // Marcar motorista como disponível (não mais em entrega)
+      await db
+        .update(drivers)
+        .set({ onDelivery: false })
+        .where(eq(drivers.id, driverId));
+
+      console.log(`✅ Status atualizado: pedido entregue`);
 
       // Emitir evento via Socket.IO
       const io = (app as any).io;
@@ -3965,36 +5128,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json({
         success: true,
         message: "Status atualizado",
-        data: { status: "delivered" }
+        data: { status: "Entregue" }
       });
     } catch (error) {
-      console.error("Erro ao atualizar status:", error);
-      return res.status(500).json({ message: "Erro ao atualizar status" });
+      console.error("❌ Erro ao atualizar status (delivered):", error);
+      return res.status(500).json({
+        success: false,
+        message: "Erro ao atualizar status"
+      });
     }
   });
 
   // POST /api/v1/driver/deliveries/:id/complete - Finalizar entrega
   app.post("/api/v1/driver/deliveries/:id/complete", async (req, res) => {
     try {
-      if (!req.session.driverId) {
-        return res.status(401).json({ message: "Não autenticado" });
+      let driverId = req.session.driverId;
+
+      // Se não tiver sessão, tenta obter do token Bearer
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Token inválido:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
+        console.error("❌ Tentativa de finalizar entrega sem autenticação");
+        return res.status(401).json({
+          success: false,
+          message: "Não autenticado"
+        });
       }
 
       const deliveryId = req.params.id;
 
-      const request = await storage.getRequest(deliveryId);
-      if (!request) {
-        return res.status(404).json({ message: "Entrega não encontrada" });
+      // Validar que o ID foi fornecido
+      if (!deliveryId || deliveryId.trim() === '') {
+        console.error("❌ ID da entrega não fornecido");
+        return res.status(400).json({
+          success: false,
+          message: "ID da entrega não fornecido"
+        });
       }
 
-      if (request.driverId !== req.session.driverId) {
-        return res.status(403).json({ message: "Esta entrega não pertence a você" });
+      console.log(`🏁 Motorista ${driverId} finalizou a entrega ${deliveryId}`);
+
+      const request = await storage.getRequest(deliveryId);
+      if (!request) {
+        console.error(`❌ Entrega ${deliveryId} não encontrada`);
+        return res.status(404).json({
+          success: false,
+          message: "Entrega não encontrada"
+        });
+      }
+
+      if (request.driverId !== driverId) {
+        console.error(`❌ Entrega ${deliveryId} não pertence ao motorista ${driverId}`);
+        return res.status(403).json({
+          success: false,
+          message: "Esta entrega não pertence a você"
+        });
       }
 
       await storage.updateRequest(deliveryId, {
         isCompleted: true,
         completedAt: new Date(),
       });
+
+      // Atualizar status do motorista para disponível novamente (marcador verde no mapa)
+      await db
+        .update(drivers)
+        .set({ onDelivery: false })
+        .where(eq(drivers.id, req.session.driverId));
 
       // Emitir evento via Socket.IO
       const io = (app as any).io;
@@ -4010,7 +5223,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json({
         success: true,
         message: "Entrega finalizada com sucesso",
-        data: { status: "completed" }
+        data: { status: "Concluída" }
       });
     } catch (error) {
       console.error("Erro ao finalizar entrega:", error);
@@ -4021,7 +5234,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET /api/v1/driver/deliveries/current - Obter entrega atual do motorista
   app.get("/api/v1/driver/deliveries/current", async (req, res) => {
     try {
-      if (!req.session.driverId) {
+      // Permitir autenticação via sessão OU Bearer token
+      let driverId = req.session.driverId;
+
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Erro ao decodificar token:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
@@ -4030,12 +5261,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
           r.id,
           r.request_number,
           r.customer_name,
+          r.customer_whatsapp,
+          r.delivery_reference,
           r.is_driver_started,
           r.is_driver_arrived,
           r.is_trip_start,
           r.is_completed,
           r.total_distance,
           r.total_time,
+          r.estimated_time,
           r.request_eta_amount,
           r.created_at,
           r.accepted_at,
@@ -4047,17 +5281,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
           rp.drop_lng,
           c.name as company_name,
           c.phone as company_phone,
-          vt.name as vehicle_type_name
+          vt.name as vehicle_type_name,
+          rb.total_amount,
+          rb.admin_commision
         FROM requests r
         LEFT JOIN request_places rp ON r.id = rp.request_id
         LEFT JOIN companies c ON r.company_id = c.id
         LEFT JOIN vehicle_types vt ON r.zone_type_id = vt.id
+        LEFT JOIN request_bills rb ON r.id = rb.request_id
         WHERE r.driver_id = $1
           AND r.is_completed = false
           AND r.is_cancelled = false
         ORDER BY r.accepted_at DESC
         LIMIT 1
-      `, [req.session.driverId]);
+      `, [driverId]);
 
       if (result.rows.length === 0) {
         return res.json({
@@ -4067,9 +5304,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      const delivery = result.rows[0];
+
+      // Formatar dados para o app
+      const formattedDelivery = {
+        ...delivery,
+        // Converter distância de metros para km e arredondar
+        total_distance: delivery.total_distance ? (parseFloat(delivery.total_distance) / 1000).toFixed(2) : "0",
+        // Tempo estimado com margem (já calculado no accept)
+        estimated_time: delivery.estimated_time || delivery.total_time || "0",
+        // Tempo original do Google Maps
+        total_time: delivery.total_time || "0",
+        // Valores financeiros
+        total_amount: delivery.total_amount ? parseFloat(delivery.total_amount).toFixed(2) : "0",
+        admin_commision: delivery.admin_commision ? parseFloat(delivery.admin_commision).toFixed(2) : "0",
+        driver_amount: delivery.total_amount && delivery.admin_commision
+          ? (parseFloat(delivery.total_amount) - parseFloat(delivery.admin_commision)).toFixed(2)
+          : "0"
+      };
+
       return res.json({
         success: true,
-        data: result.rows[0]
+        data: formattedDelivery
       });
     } catch (error) {
       console.error("Erro ao buscar entrega atual:", error);

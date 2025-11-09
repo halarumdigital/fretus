@@ -184,9 +184,6 @@ export const cityPrices = pgTable("city_prices", {
   serviceLocationId: varchar("service_location_id").notNull().references(() => serviceLocations.id),
   vehicleTypeId: varchar("vehicle_type_id").notNull().references(() => vehicleTypes.id),
 
-  // Payment Methods
-  paymentType: varchar("payment_type", { length: 20 }).notNull().default("cash"),
-
   // Pricing
   basePrice: numeric("base_price", { precision: 10, scale: 2 }).notNull(),
   pricePerDistance: numeric("price_per_distance", { precision: 10, scale: 2 }).notNull(),
@@ -203,19 +200,6 @@ export const cityPrices = pgTable("city_prices", {
   // Stop and Return Prices
   stopPrice: numeric("stop_price", { precision: 10, scale: 2 }).default("0"),
   returnPrice: numeric("return_price", { precision: 10, scale: 2 }).default("0"),
-
-  // Service Tax
-  serviceTax: numeric("service_tax", { precision: 5, scale: 2 }).default("0"),
-
-  // Commissions (Admin)
-  adminCommisionType: varchar("admin_commision_type", { length: 20 }).notNull().default("percentage"),
-  adminCommision: numeric("admin_commision", { precision: 10, scale: 2 }).notNull().default("20"),
-
-  // Surge Pricing
-  surgePricing: boolean("surge_pricing").notNull().default(false),
-  peakHourStart: varchar("peak_hour_start", { length: 5 }),
-  peakHourEnd: varchar("peak_hour_end", { length: 5 }),
-  peakHourMultiplier: numeric("peak_hour_multiplier", { precision: 3, scale: 2 }).default("1"),
 
   active: boolean("active").notNull().default(true),
 
@@ -253,6 +237,7 @@ export const drivers = pgTable("drivers", {
   active: boolean("active").notNull().default(true),
   approve: boolean("approve").notNull().default(false),
   available: boolean("available").notNull().default(false),
+  onDelivery: boolean("on_delivery").notNull().default(false), // Marcador se está em uma entrega
 
   // Documents
   uploadedDocuments: boolean("uploaded_documents").notNull().default(false),
@@ -286,6 +271,8 @@ export const requests = pgTable("requests", {
   userId: varchar("user_id").references(() => users.id),
   companyId: varchar("company_id").references(() => companies.id),
   customerName: varchar("customer_name", { length: 255 }),
+  customerWhatsapp: varchar("customer_whatsapp", { length: 20 }), // WhatsApp com DDD
+  deliveryReference: text("delivery_reference"), // Referência do local de entrega
   driverId: varchar("driver_id").references(() => drivers.id),
 
   // Type
@@ -315,6 +302,7 @@ export const requests = pgTable("requests", {
   // Trip Details
   totalDistance: numeric("total_distance", { precision: 10, scale: 2 }),
   totalTime: numeric("total_time", { precision: 10, scale: 2 }),
+  estimatedTime: numeric("estimated_time", { precision: 10, scale: 2 }), // Tempo estimado de entrega em minutos
   notes: text("notes"), // Observações da entrega
 
   // Payment (simplificado - apenas cash por enquanto)
@@ -353,13 +341,13 @@ export const requestPlaces = pgTable("request_places", {
   requestId: varchar("request_id").notNull().references(() => requests.id),
 
   // Pickup
-  pickLat: numeric("pick_lat", { precision: 10, scale: 7 }).notNull(),
-  pickLng: numeric("pick_lng", { precision: 10, scale: 7 }).notNull(),
+  pickLat: numeric("pick_lat", { precision: 10, scale: 7 }),
+  pickLng: numeric("pick_lng", { precision: 10, scale: 7 }),
   pickAddress: text("pick_address").notNull(),
 
   // Drop
-  dropLat: numeric("drop_lat", { precision: 10, scale: 7 }).notNull(),
-  dropLng: numeric("drop_lng", { precision: 10, scale: 7 }).notNull(),
+  dropLat: numeric("drop_lat", { precision: 10, scale: 7 }),
+  dropLng: numeric("drop_lng", { precision: 10, scale: 7 }),
   dropAddress: text("drop_address").notNull(),
 
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -477,6 +465,7 @@ export const settings = pgTable("settings", {
   driverSearchRadius: numeric("driver_search_radius", { precision: 10, scale: 2 }).notNull().default("10"), // km
   minTimeToFindDriver: integer("min_time_to_find_driver").notNull().default(120), // segundos
   driverAcceptanceTimeout: integer("driver_acceptance_timeout").notNull().default(30), // segundos
+  autoCancelTimeout: integer("auto_cancel_timeout").notNull().default(30), // minutos - tempo para cancelamento automático de entregas não aceitas
 
   // Pricing
   canRoundTripValues: boolean("can_round_trip_values").notNull().default(true),
@@ -609,6 +598,7 @@ export const insertSettingsSchema = z.object({
   driverSearchRadius: z.union([z.string(), z.number()]).transform(val => String(val)),
   minTimeToFindDriver: z.union([z.string(), z.number()]).transform(val => Number(val)),
   driverAcceptanceTimeout: z.union([z.string(), z.number()]).transform(val => Number(val)),
+  autoCancelTimeout: z.union([z.string(), z.number()]).transform(val => Number(val)),
 
   // Pricing
   canRoundTripValues: z.boolean(),

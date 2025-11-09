@@ -24,6 +24,8 @@ import Register from "@/pages/register";
 import EmpresaLogin from "@/pages/empresa-login";
 import EmpresaDashboard from "@/pages/empresa-dashboard";
 import EmpresaEntregas from "@/pages/empresa-entregas";
+import EntregasEmAndamento from "@/pages/entregas-em-andamento";
+import EntregasCanceladas from "@/pages/entregas-canceladas";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -99,6 +101,8 @@ function Router() {
               <Route path="/motoristas/ativos" component={MotoristasAtivos} />
               <Route path="/motoristas/bloqueados" component={MotoristasBloqueados} />
               <Route path="/motoristas/aguardando" component={MotoristasAguardando} />
+              <Route path="/entregas/em-andamento" component={EntregasEmAndamento} />
+              <Route path="/entregas/canceladas" component={EntregasCanceladas} />
               <Route path="/configuracoes" component={Configuracoes} />
               <Route component={NotFound} />
             </Switch>

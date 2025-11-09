@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useSocket } from "@/hooks/useSocket";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,9 +35,15 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Eye, Clock, User, DollarSign, Package, MapPin, Loader2, X } from "lucide-react";
+import { Plus, Eye, Clock, User, DollarSign, Package, MapPin, Loader2, X, RefreshCw } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+
+// Função para formatar datas no horário de Brasília (sem conversão de timezone)
+const formatBrazilianDateTime = (date: string | Date) => {
+  const d = new Date(date);
+  return format(d, 'dd/MM/yyyy, HH:mm', { locale: ptBR });
+};
 import "@/styles/google-maps-fix.css";
 
 interface Delivery {
@@ -50,9 +57,11 @@ interface Delivery {
   pickupAddress: string | null;
   dropoffAddress: string | null;
   totalTime: string | null;
+  estimatedTime: string | null;
   distance: string | null;
   completedAt: string | null;
   cancelledAt: string | null;
+  cancelReason: string | null;
 }
 
 const statusMap: Record<string, { label: string; color: string }> = {
@@ -104,6 +113,7 @@ export default function EmpresaEntregas() {
     {
       id: 1,
       customerName: "",
+      customerWhatsapp: "",
       cep: "",
       address: "",
       number: "",
@@ -135,6 +145,7 @@ export default function EmpresaEntregas() {
 
   const { data: deliveries = [], isLoading } = useQuery<Delivery[]>({
     queryKey: ["/api/empresa/deliveries"],
+    refetchInterval: 10000, // Atualiza a cada 10 segundos
   });
 
   const { data: vehicleTypes = [] } = useQuery<VehicleType[]>({
@@ -150,6 +161,57 @@ export default function EmpresaEntregas() {
     queryKey: ["/api/settings/google-maps-key"],
     staleTime: Infinity,
   });
+
+  // Socket.IO - Conectar e escutar eventos em tempo real
+  const { isConnected, on } = useSocket({
+    companyId: companyData?.id,
+    autoConnect: !!companyData?.id,
+  });
+
+  // Listeners de eventos Socket.IO
+  useEffect(() => {
+    if (!isConnected) return;
+
+    // Evento: Motorista aceitou a entrega
+    on("delivery-accepted", (data: any) => {
+      console.log("🎉 Entrega aceita pelo motorista:", data);
+
+      toast({
+        title: "Entrega aceita!",
+        description: `${data.driverName || "Um motorista"} aceitou a entrega #${data.requestNumber}`,
+      });
+
+      // Invalidar queries para atualizar a lista
+      queryClient.invalidateQueries({ queryKey: ["/api/empresa/deliveries"] });
+    });
+
+    // Evento: Status da entrega foi atualizado
+    on("delivery-status-updated", (data: any) => {
+      console.log("📦 Status da entrega atualizado:", data);
+
+      const statusMessages: Record<string, string> = {
+        arrived: "Motorista chegou no local de retirada",
+        picked_up: "Motorista coletou a entrega",
+        delivered: "Entrega realizada com sucesso",
+        completed: "Entrega finalizada",
+      };
+
+      const message = statusMessages[data.status] || "Status atualizado";
+
+      toast({
+        title: `Entrega #${data.requestNumber}`,
+        description: message,
+      });
+
+      // Invalidar queries para atualizar a lista
+      queryClient.invalidateQueries({ queryKey: ["/api/empresa/deliveries"] });
+    });
+
+    // Cleanup: remover listeners ao desmontar
+    return () => {
+      // Nota: o hook já faz cleanup da conexão
+    };
+  }, [isConnected, on, toast]);
 
   // Load Google Maps script
   useEffect(() => {
@@ -318,6 +380,7 @@ export default function EmpresaEntregas() {
     setDeliveryPoints([...deliveryPoints, {
       id: newId,
       customerName: "",
+      customerWhatsapp: "",
       cep: "",
       address: "",
       number: "",
@@ -436,6 +499,26 @@ export default function EmpresaEntregas() {
     },
   });
 
+  const relaunchDeliveryMutation = useMutation({
+    mutationFn: async (deliveryId: string) => {
+      return await apiRequest("POST", `/api/empresa/deliveries/${deliveryId}/relaunch`, {});
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/empresa/deliveries"] });
+      toast({
+        title: "Entrega relançada com sucesso!",
+        description: "A entrega foi relançada e está aguardando um motorista.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Erro ao relançar entrega",
+        description: error.message || "Ocorreu um erro ao relançar a entrega.",
+      });
+    },
+  });
+
   const calculateRoute = async () => {
     // Check if we have at least one delivery point with address
     const validDeliveryPoints = deliveryPoints.filter(point => point.address);
@@ -507,7 +590,7 @@ export default function EmpresaEntregas() {
             waypoints: waypoints,
             travelMode: google.maps.TravelMode.DRIVING,
           },
-          (response, status) => {
+          async (response, status) => {
             if (status === "OK" && response) {
               directionsRenderer.setDirections(response);
 
@@ -585,19 +668,49 @@ export default function EmpresaEntregas() {
               let totalDuration = 0;
 
               response.routes[0].legs.forEach((leg) => {
+                console.log(`Leg distance: ${leg.distance?.value}m (${leg.distance?.text})`);
                 totalDistance += leg.distance?.value || 0;
                 totalDuration += leg.duration?.value || 0;
               });
 
-              const distanceInKm = totalDistance / 1000;
-              const durationInMinutes = Math.ceil(totalDuration / 60);
-              const estimatedPrice = 10 + (distanceInKm * 3);
+              console.log(`Total distance from API: ${totalDistance}m (${totalDistance / 1000}km)`);
 
-              setRouteInfo({
-                distance: distanceInKm,
-                duration: durationInMinutes,
-                price: estimatedPrice,
-              });
+              // Arredondar distância para cima (próximo 0.5 km) para ficar consistente com Google Maps
+              const exactDistanceKm = totalDistance / 1000;
+              const distanceInKm = Math.ceil(exactDistanceKm * 2) / 2; // Arredonda para 0.5, 1.0, 1.5, 2.0, etc
+              const durationInMinutes = Math.ceil(totalDuration / 60);
+
+              console.log(`Distance rounded for pricing: ${distanceInKm}km (from ${exactDistanceKm}km)`);
+
+              // Calcular preço usando a API com base na tabela city_prices
+              try {
+                console.log("Calculating price with:", { vehicleTypeId: deliveryForm.vehicleTypeId, distanceKm: distanceInKm, durationMinutes: durationInMinutes });
+                const res = await apiRequest("POST", "/api/empresa/calculate-price", {
+                  vehicleTypeId: deliveryForm.vehicleTypeId,
+                  distanceKm: distanceInKm,
+                  durationMinutes: durationInMinutes,
+                });
+
+                const priceResponse = await res.json();
+
+                console.log("Price response:", priceResponse);
+
+                setRouteInfo({
+                  distance: distanceInKm,
+                  duration: durationInMinutes,
+                  price: parseFloat(priceResponse.totalPrice),
+                });
+
+                console.log("Route info set with price:", parseFloat(priceResponse.totalPrice));
+              } catch (priceError: any) {
+                console.error("Erro ao calcular preço:", priceError);
+                toast({
+                  variant: "destructive",
+                  title: "Erro ao calcular preço",
+                  description: priceError.message || "Não foi possível calcular o preço. Verifique se há configuração de preço para esta categoria.",
+                });
+                setRouteInfo(null);
+              }
             } else {
               let errorMessage = "Não foi possível calcular a rota.";
 
@@ -646,7 +759,30 @@ export default function EmpresaEntregas() {
     }
   }, [deliveryForm.vehicleTypeId, deliveryPoints]);
 
-  const handleSubmitDelivery = () => {
+  // Function to geocode an address and get lat/lng
+  const geocodeAddress = async (address: string): Promise<{ lat: number; lng: number } | null> => {
+    if (!window.google?.maps) {
+      return null;
+    }
+
+    return new Promise((resolve) => {
+      const geocoder = new google.maps.Geocoder();
+      geocoder.geocode({ address, region: 'br' }, (results, status) => {
+        if (status === 'OK' && results && results[0]) {
+          const location = results[0].geometry.location;
+          resolve({
+            lat: location.lat(),
+            lng: location.lng(),
+          });
+        } else {
+          console.error('Geocoding failed for address:', address, 'Status:', status);
+          resolve(null);
+        }
+      });
+    });
+  };
+
+  const handleSubmitDelivery = async () => {
     // Validation
     const hasDeliveryPoint = deliveryPoints.some(point => point.address);
 
@@ -668,29 +804,83 @@ export default function EmpresaEntregas() {
       return;
     }
 
-    const pickupFullAddress = `${deliveryForm.pickupAddress}, ${deliveryForm.pickupNumber || "S/N"} - ${deliveryForm.pickupNeighborhood}`;
+    if (!window.google?.maps) {
+      toast({
+        variant: "destructive",
+        title: "Google Maps não carregado",
+        description: "Aguarde o carregamento do Google Maps.",
+      });
+      return;
+    }
+
+    // Build pickup address with city and state
+    const pickupCity = companyData?.city || "";
+    const pickupState = companyData?.state || "";
+    const pickupFullAddress = `${deliveryForm.pickupAddress}, ${deliveryForm.pickupNumber || "S/N"}, ${deliveryForm.pickupNeighborhood}${pickupCity ? `, ${pickupCity}` : ""}${pickupState ? ` - ${pickupState}` : ""}, Brasil`;
 
     // Get all delivery points
     const validDeliveryPoints = deliveryPoints.filter(point => point.address);
 
-    // Build all delivery addresses
-    const deliveryAddresses = validDeliveryPoints.map(point =>
-      `${point.address}, ${point.number || "S/N"} - ${point.neighborhood}`
-    );
+    // Build all delivery addresses with city and state
+    const deliveryAddresses = validDeliveryPoints.map(point => {
+      const addressParts = [
+        point.address,
+        point.number || "S/N",
+        point.neighborhood,
+      ];
 
-    // Join all delivery addresses with separator
-    const allDeliveryAddresses = deliveryAddresses.join(" | ");
+      if (point.city) addressParts.push(point.city);
+      if (point.state) addressParts.push(point.state);
+      addressParts.push("Brasil");
+
+      return addressParts.filter(Boolean).join(", ");
+    });
+
+    // Join all delivery addresses with separator (for display only)
+    const allDeliveryAddresses = deliveryAddresses.map((addr, idx) =>
+      `${validDeliveryPoints[idx].address}, ${validDeliveryPoints[idx].number || "S/N"} - ${validDeliveryPoints[idx].neighborhood}`
+    ).join(" | ");
+
+    // Geocode pickup address
+    console.log('🔍 Geocodificando endereço de retirada:', pickupFullAddress);
+    const pickupCoords = await geocodeAddress(pickupFullAddress);
+
+    if (!pickupCoords) {
+      toast({
+        variant: "destructive",
+        title: "Erro na geocodificação",
+        description: "Não foi possível obter as coordenadas do endereço de retirada. Verifique se o endereço está completo e correto.",
+      });
+      return;
+    }
+
+    console.log('✅ Coordenadas de retirada:', pickupCoords);
+
+    // Geocode first delivery address (use the most complete one)
+    console.log('🔍 Geocodificando endereço de entrega:', deliveryAddresses[0]);
+    const dropoffCoords = await geocodeAddress(deliveryAddresses[0]);
+
+    if (!dropoffCoords) {
+      toast({
+        variant: "destructive",
+        title: "Erro na geocodificação",
+        description: "Não foi possível obter as coordenadas do endereço de entrega. Verifique se o endereço está completo e correto.",
+      });
+      return;
+    }
+
+    console.log('✅ Coordenadas de entrega:', dropoffCoords);
 
     createDeliveryMutation.mutate({
       pickupAddress: {
         address: pickupFullAddress,
-        lat: null,
-        lng: null,
+        lat: pickupCoords.lat,
+        lng: pickupCoords.lng,
       },
       dropoffAddress: {
         address: allDeliveryAddresses,
-        lat: null,
-        lng: null,
+        lat: dropoffCoords.lat,
+        lng: dropoffCoords.lng,
       },
       vehicleTypeId: deliveryForm.vehicleTypeId,
       serviceLocationId: null,
@@ -698,6 +888,8 @@ export default function EmpresaEntregas() {
       distance: routeInfo?.distance?.toString() || null,
       estimatedTime: routeInfo?.duration?.toString() || null,
       customerName: validDeliveryPoints[0]?.customerName || null,
+      customerWhatsapp: validDeliveryPoints[0]?.customerWhatsapp || null,
+      deliveryReference: validDeliveryPoints[0]?.reference || null,
     });
   };
 
@@ -758,9 +950,7 @@ export default function EmpresaEntregas() {
                       {delivery.customerName || <span className="text-muted-foreground italic">-</span>}
                     </TableCell>
                     <TableCell>
-                      {format(new Date(delivery.createdAt), "dd/MM/yyyy HH:mm", {
-                        locale: ptBR,
-                      })}
+                      {formatBrazilianDateTime(delivery.createdAt)}
                     </TableCell>
                     <TableCell>
                       {delivery.driverName ? (
@@ -775,10 +965,10 @@ export default function EmpresaEntregas() {
                       )}
                     </TableCell>
                     <TableCell>
-                      {delivery.totalTime ? (
+                      {delivery.estimatedTime ? (
                         <div className="flex items-center gap-2">
                           <Clock className="h-4 w-4 text-muted-foreground" />
-                          {delivery.totalTime} min
+                          {delivery.estimatedTime} min
                         </div>
                       ) : (
                         <span className="text-muted-foreground">-</span>
@@ -796,8 +986,7 @@ export default function EmpresaEntregas() {
                     </TableCell>
                     <TableCell>
                       {delivery.totalPrice ? (
-                        <div className="flex items-center gap-1 font-semibold text-green-600">
-                          <DollarSign className="h-4 w-4" />
+                        <div className="font-semibold text-green-600">
                           {new Intl.NumberFormat("pt-BR", {
                             style: "currency",
                             currency: "BRL",
@@ -808,13 +997,30 @@ export default function EmpresaEntregas() {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleViewDetails(delivery)}
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
+                      <div className="flex items-center justify-end gap-2">
+                        {delivery.status === 'cancelled' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => relaunchDeliveryMutation.mutate(delivery.id)}
+                            disabled={relaunchDeliveryMutation.isPending}
+                          >
+                            {relaunchDeliveryMutation.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-4 w-4" />
+                            )}
+                            <span className="ml-1">Relançar</span>
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleViewDetails(delivery)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -907,6 +1113,16 @@ export default function EmpresaEntregas() {
                   </p>
                 </div>
               </div>
+
+              {/* Observações de cancelamento */}
+              {selectedDelivery.cancelReason && (
+                <div className="pt-4 border-t">
+                  <label className="text-sm text-muted-foreground">Motivo do Cancelamento</label>
+                  <div className="p-3 bg-muted rounded-md mt-2">
+                    <p className="text-sm whitespace-pre-wrap">{selectedDelivery.cancelReason}</p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
@@ -1053,6 +1269,21 @@ export default function EmpresaEntregas() {
                             value={point.customerName}
                             onChange={(e) => updateDeliveryPoint(point.id, "customerName", e.target.value)}
                             placeholder="Nome completo do cliente"
+                            className="h-9"
+                          />
+                        </div>
+
+                        <div>
+                          <Label htmlFor={`customerWhatsapp-${point.id}`} className="text-xs">WhatsApp (opcional)</Label>
+                          <Input
+                            id={`customerWhatsapp-${point.id}`}
+                            value={point.customerWhatsapp}
+                            onChange={(e) => {
+                              const value = e.target.value.replace(/\D/g, "");
+                              updateDeliveryPoint(point.id, "customerWhatsapp", value);
+                            }}
+                            placeholder="11999999999"
+                            maxLength={11}
                             className="h-9"
                           />
                         </div>
@@ -1211,9 +1442,8 @@ export default function EmpresaEntregas() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <DollarSign className="h-4 w-4 text-green-600" />
                       <div>
-                        <p className="text-xs text-muted-foreground">Valor</p>
+                        <p className="text-xs text-muted-foreground">Valor Total</p>
                         <p className="font-semibold text-green-600">
                           {routeInfo.price
                             ? new Intl.NumberFormat("pt-BR", {
