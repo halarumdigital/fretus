@@ -1,0 +1,272 @@
+{
+  "endpoints": {
+    "delivered": {
+      "url": "/api/v1/driver/deliveries/{deliveryId}/delivered",
+      "method": "POST",
+      "headers": {
+        "Authorization": "Bearer eyJ0eXBlIjoiZHJpdmVyIiwiaWQiOiJkcml2ZXJfaWRfaGVyZSJ9",
+        "Content-Type": "application/json"
+      },
+      "cenarios": {
+        "sem_retorno": {
+          "descricao": "Entrega normal sem necessidade de retorno",
+          "request": {},
+          "response": {
+            "success": true,
+            "message": "Entrega finalizada com sucesso",
+            "data": {
+              "status": "completed",
+              "needsReturn": false
+            }
+          },
+          "status_code": 200,
+          "proximo_passo": "Motorista fica disponível para novas entregas"
+        },
+        "com_retorno": {
+          "descricao": "Entrega que requer retorno ao ponto de origem",
+          "request": {},
+          "response": {
+            "success": true,
+            "message": "Produto entregue. Retorne ao ponto de origem para finalizar.",
+            "data": {
+              "status": "delivered_awaiting_return",
+              "needsReturn": true
+            }
+          },
+          "status_code": 200,
+          "proximo_passo": "Mostrar tela de retorno com botão 'Iniciar Retorno'"
+        },
+        "nao_autenticado": {
+          "descricao": "Tentativa sem autenticação",
+          "request": {},
+          "response": {
+            "success": false,
+            "message": "Não autenticado"
+          },
+          "status_code": 401,
+          "acao": "Redirecionar para login"
+        },
+        "nao_pertence": {
+          "descricao": "Entrega não pertence ao motorista",
+          "request": {},
+          "response": {
+            "success": false,
+            "message": "Esta entrega não pertence a você"
+          },
+          "status_code": 403,
+          "acao": "Mostrar erro e voltar para lista"
+        }
+      }
+    },
+    "start_return": {
+      "url": "/api/v1/driver/deliveries/{deliveryId}/start-return",
+      "method": "POST",
+      "headers": {
+        "Authorization": "Bearer eyJ0eXBlIjoiZHJpdmVyIiwiaWQiOiJkcml2ZXJfaWRfaGVyZSJ9",
+        "Content-Type": "application/json"
+      },
+      "cenarios": {
+        "sucesso": {
+          "descricao": "Retorno iniciado com sucesso",
+          "request": {},
+          "response": {
+            "success": true,
+            "message": "Retorno iniciado",
+            "data": {
+              "status": "returning"
+            }
+          },
+          "status_code": 200,
+          "proximo_passo": "Iniciar navegação GPS para ponto de retirada e mostrar botão 'Cheguei no Local'"
+        },
+        "nao_requer_retorno": {
+          "descricao": "Entrega não precisa de retorno",
+          "request": {},
+          "response": {
+            "success": false,
+            "message": "Esta entrega não requer retorno"
+          },
+          "status_code": 400,
+          "acao": "Não deveria acontecer - verificar lógica do app"
+        },
+        "nao_entregou_ainda": {
+          "descricao": "Motorista não entregou o produto ainda",
+          "request": {},
+          "response": {
+            "success": false,
+            "message": "Você precisa entregar o produto primeiro"
+          },
+          "status_code": 400,
+          "acao": "Mostrar erro e indicar que precisa entregar primeiro"
+        },
+        "nao_autenticado": {
+          "descricao": "Tentativa sem autenticação",
+          "request": {},
+          "response": {
+            "success": false,
+            "message": "Não autenticado"
+          },
+          "status_code": 401,
+          "acao": "Redirecionar para login"
+        }
+      }
+    },
+    "complete_return": {
+      "url": "/api/v1/driver/deliveries/{deliveryId}/complete-return",
+      "method": "POST",
+      "headers": {
+        "Authorization": "Bearer eyJ0eXBlIjoiZHJpdmVyIiwiaWQiOiJkcml2ZXJfaWRfaGVyZSJ9",
+        "Content-Type": "application/json"
+      },
+      "cenarios": {
+        "sucesso": {
+          "descricao": "Retorno concluído com sucesso",
+          "request": {},
+          "response": {
+            "success": true,
+            "message": "Entrega finalizada com sucesso",
+            "data": {
+              "status": "completed"
+            }
+          },
+          "status_code": 200,
+          "proximo_passo": "Motorista fica disponível para novas entregas, mostrar notificação de sucesso"
+        },
+        "nao_requer_retorno": {
+          "descricao": "Entrega não precisa de retorno",
+          "request": {},
+          "response": {
+            "success": false,
+            "message": "Esta entrega não requer retorno"
+          },
+          "status_code": 400,
+          "acao": "Não deveria acontecer - verificar lógica do app"
+        },
+        "nao_iniciou_retorno": {
+          "descricao": "Motorista não iniciou o retorno ainda",
+          "request": {},
+          "response": {
+            "success": false,
+            "message": "Você precisa iniciar o retorno primeiro"
+          },
+          "status_code": 400,
+          "acao": "Mostrar erro e indicar que precisa iniciar retorno primeiro"
+        },
+        "nao_autenticado": {
+          "descricao": "Tentativa sem autenticação",
+          "request": {},
+          "response": {
+            "success": false,
+            "message": "Não autenticado"
+          },
+          "status_code": 401,
+          "acao": "Redirecionar para login"
+        }
+      }
+    }
+  },
+  "fluxo_completo_teste": {
+    "descricao": "Sequência completa de testes para entrega com retorno",
+    "passos": [
+      {
+        "passo": 1,
+        "acao": "Buscar detalhes da entrega",
+        "endpoint": "GET /api/v1/driver/deliveries/{deliveryId}",
+        "verificar": "needsReturn = true"
+      },
+      {
+        "passo": 2,
+        "acao": "Marcar como entregue",
+        "endpoint": "POST /api/v1/driver/deliveries/{deliveryId}/delivered",
+        "esperado": "status = delivered_awaiting_return"
+      },
+      {
+        "passo": 3,
+        "acao": "Iniciar retorno",
+        "endpoint": "POST /api/v1/driver/deliveries/{deliveryId}/start-return",
+        "esperado": "status = returning"
+      },
+      {
+        "passo": 4,
+        "acao": "Completar retorno",
+        "endpoint": "POST /api/v1/driver/deliveries/{deliveryId}/complete-return",
+        "esperado": "status = completed, motorista disponível"
+      }
+    ]
+  },
+  "exemplos_curl": {
+    "delivered": "curl -X POST 'http://localhost:5000/api/v1/driver/deliveries/abc123/delivered' \\\n  -H 'Authorization: Bearer eyJ0eXBlIjoiZHJpdmVyIiwiaWQiOiJkcml2ZXJfaWRfaGVyZSJ9' \\\n  -H 'Content-Type: application/json'",
+    "start_return": "curl -X POST 'http://localhost:5000/api/v1/driver/deliveries/abc123/start-return' \\\n  -H 'Authorization: Bearer eyJ0eXBlIjoiZHJpdmVyIiwiaWQiOiJkcml2ZXJfaWRfaGVyZSJ9' \\\n  -H 'Content-Type: application/json'",
+    "complete_return": "curl -X POST 'http://localhost:5000/api/v1/driver/deliveries/abc123/complete-return' \\\n  -H 'Authorization: Bearer eyJ0eXBlIjoiZHJpdmVyIiwiaWQiOiJkcml2ZXJfaWRfaGVyZSJ9' \\\n  -H 'Content-Type: application/json'"
+  },
+  "notas_importantes": [
+    "Substituir {deliveryId} pelo ID real da entrega",
+    "Substituir o token Bearer pelo token real do motorista",
+    "Todos os endpoints requerem autenticação",
+    "Os endpoints devem ser chamados na sequência correta",
+    "Durante todo o processo de retorno, o motorista permanece indisponível",
+    "O valor do retorno já está incluído no preço total da entrega",
+    "Eventos Socket.IO são emitidos para a empresa em cada mudança de status"
+  ],
+  "exemplo_entrega_disponivel": {
+    "descricao": "Exemplo de entrega retornada pelo endpoint /api/v1/driver/deliveries/available",
+    "dados": {
+      "id": "abc123",
+      "request_number": "REQ-1234567890-123",
+      "customer_name": "Jennifer e Felipe Pizzaria ME",
+      "total_distance": "1000",
+      "total_time": "9",
+      "needs_return": true,
+      "created_at": "2025-11-11T14:30:00Z",
+      "pick_address": "Xv de Novembro, 500, Centro, Joaçaba - SC, Brasil",
+      "drop_address": "Rua Getúlio Vargas, 200 - centro",
+      "pick_lat": -27.1717,
+      "pick_lng": -51.5070,
+      "drop_lat": -27.1750,
+      "drop_lng": -51.5100,
+      "company_name": "Jennifer e Felipe Pizzaria ME",
+      "vehicle_type_name": "Moto",
+      "request_eta_amount": "5.60"
+    },
+    "nota_importante": "QUANDO needs_return = true, DEVE EXIBIR AVISO NO MODAL: 'ESTA ENTREGA POSSUI VOLTA'"
+  },
+  "campos_entrega": {
+    "needsReturn": {
+      "tipo": "boolean",
+      "descricao": "Indica se o motorista precisa retornar ao ponto de origem",
+      "valores": [true, false],
+      "aviso_ui": "Quando true, exibir banner de alerta no modal de notificação"
+    },
+    "deliveredAt": {
+      "tipo": "timestamp",
+      "descricao": "Data/hora que o produto foi entregue ao cliente",
+      "formato": "ISO 8601",
+      "exemplo": "2025-11-11T14:30:00-03:00"
+    },
+    "returningAt": {
+      "tipo": "timestamp",
+      "descricao": "Data/hora que o motorista iniciou o retorno",
+      "formato": "ISO 8601",
+      "exemplo": "2025-11-11T14:35:00-03:00"
+    },
+    "returnedAt": {
+      "tipo": "timestamp",
+      "descricao": "Data/hora que o motorista chegou de volta",
+      "formato": "ISO 8601",
+      "exemplo": "2025-11-11T14:50:00-03:00"
+    },
+    "status": {
+      "tipo": "string",
+      "valores_possiveis": [
+        "pending",
+        "accepted",
+        "arrived_pickup",
+        "in_progress",
+        "delivered_awaiting_return",
+        "returning",
+        "completed",
+        "cancelled"
+      ]
+    }
+  }
+}

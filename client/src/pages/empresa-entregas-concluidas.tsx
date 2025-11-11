@@ -44,6 +44,7 @@ interface Delivery {
   completedAt: string | null;
   driverId: string | null;
   driverName: string | null;
+  needsReturn: boolean | null;
 }
 
 // Função helper para formatar datas no horário de Brasília
@@ -451,6 +452,19 @@ export default function EmpresaEntregasConcluidas() {
                   </div>
                 </div>
               </div>
+
+              {/* Indicador de volta */}
+              {selectedDelivery.needsReturn && (
+                <div className="pt-4 border-t">
+                  <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                    <CheckCircle2 className="h-5 w-5 text-amber-600" />
+                    <div>
+                      <p className="text-sm font-medium text-amber-900">Entrega com Volta</p>
+                      <p className="text-xs text-amber-700">Motorista retornou ao ponto de origem após a entrega</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {selectedDelivery.totalPrice && (
                 <div className="pt-4 border-t">

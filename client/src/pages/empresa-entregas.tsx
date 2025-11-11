@@ -75,6 +75,8 @@ const statusMap: Record<string, { label: string; color: string }> = {
   arrived_pickup: { label: "Cheguei para retirada", color: "bg-purple-100 text-purple-700" },
   arrived: { label: "Motorista chegou", color: "bg-purple-100 text-purple-700" },
   in_progress: { label: "Em andamento", color: "bg-orange-100 text-orange-700" },
+  delivered_awaiting_return: { label: "Entregue, aguardando retorno", color: "bg-cyan-100 text-cyan-700" },
+  returning: { label: "Retornando ao ponto de origem", color: "bg-indigo-100 text-indigo-700" },
   completed: { label: "Completa", color: "bg-green-600 text-white" },
   cancelled: { label: "Cancelada", color: "bg-red-100 text-red-700" },
 };
@@ -114,6 +116,8 @@ export default function EmpresaEntregas() {
     pickupReference: "",
     // Category
     vehicleTypeId: "",
+    // Return option
+    needsReturn: false,
   });
 
   // Delivery points (multiple stops)
@@ -201,6 +205,8 @@ export default function EmpresaEntregas() {
         arrived: "Motorista chegou no local de retirada",
         picked_up: "Motorista coletou a entrega",
         delivered: "Entrega realizada com sucesso",
+        delivered_awaiting_return: "Produto entregue, motorista retornando",
+        returning: "Motorista retornando ao ponto de origem",
         completed: "Entrega finalizada",
       };
 
@@ -365,9 +371,12 @@ export default function EmpresaEntregas() {
         pickupNeighborhood: "",
         pickupReference: "",
         vehicleTypeId: "",
+        needsReturn: false,
       });
       setDeliveryPoints([{
         id: 1,
+        customerName: "",
+        customerWhatsapp: "",
         cep: "",
         address: "",
         number: "",
@@ -735,11 +744,12 @@ export default function EmpresaEntregas() {
 
               // Calcular preço usando a API com base na tabela city_prices
               try {
-                console.log("Calculating price with:", { vehicleTypeId: deliveryForm.vehicleTypeId, distanceKm: distanceInKm, durationMinutes: durationInMinutes });
+                console.log("Calculating price with:", { vehicleTypeId: deliveryForm.vehicleTypeId, distanceKm: distanceInKm, durationMinutes: durationInMinutes, needsReturn: deliveryForm.needsReturn });
                 const res = await apiRequest("POST", "/api/empresa/calculate-price", {
                   vehicleTypeId: deliveryForm.vehicleTypeId,
                   distanceKm: distanceInKm,
                   durationMinutes: durationInMinutes,
+                  needsReturn: deliveryForm.needsReturn,
                 });
 
                 const priceResponse = await res.json();
@@ -808,7 +818,7 @@ export default function EmpresaEntregas() {
     ) {
       calculateRoute();
     }
-  }, [deliveryForm.vehicleTypeId, deliveryPoints]);
+  }, [deliveryForm.vehicleTypeId, deliveryForm.needsReturn, deliveryPoints]);
 
   // Function to geocode an address and get lat/lng
   const geocodeAddress = async (address: string): Promise<{ lat: number; lng: number } | null> => {
@@ -951,6 +961,7 @@ export default function EmpresaEntregas() {
       customerName: validDeliveryPoints[0]?.customerName || null,
       customerWhatsapp: validDeliveryPoints[0]?.customerWhatsapp || null,
       deliveryReference: validDeliveryPoints[0]?.reference || null,
+      needsReturn: deliveryForm.needsReturn,
     });
   };
 
@@ -1537,6 +1548,55 @@ export default function EmpresaEntregas() {
                   </div>
                 </div>
               )}
+  
+              {/* Opção de Retorno - DESTACADO */}
+              <div className="flex items-center space-x-4 py-6 border-t-4 border-red-500 bg-red-50 rounded-xl p-6 shadow-lg">
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    id="needsReturn"
+                    checked={deliveryForm.needsReturn}
+                    onChange={(e) => {
+                      setDeliveryForm({ ...deliveryForm, needsReturn: e.target.checked });
+                    }}
+                    className="h-6 w-6 rounded border-red-300 text-red-600 focus:ring-red-500 focus:ring-2 focus:ring-offset-2"
+                  />
+                  <div>
+                    <Label htmlFor="needsReturn" className="text-base font-bold cursor-pointer text-red-800">
+                      ⚠️ Motorista precisa voltar ao ponto de origem após a entrega?
+                    </Label>
+                    <p className="text-sm text-red-600 mt-2 font-medium">
+                      Se marcado, o motorista deverá retornar ao local de retirada
+                    </p>
+                  </div>
+                </div>
+              </div>
+  
+              {/* Botões de Ação */}
+              <div className="flex gap-2 pt-4 border-t">
+                <Button
+                  variant="outline"
+                  onClick={() => setNewDeliveryOpen(false)}
+                  disabled={createDeliveryMutation.isPending}
+                  className="flex-1 h-9"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={handleSubmitDelivery}
+                  disabled={createDeliveryMutation.isPending}
+                  className="flex-1 h-9"
+                >
+                  {createDeliveryMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Criando...
+                    </>
+                  ) : (
+                    "Criar Entrega"
+                  )}
+                </Button>
+              </div>
 
               {/* Botões de Ação */}
               <div className="flex gap-2 pt-4 border-t">

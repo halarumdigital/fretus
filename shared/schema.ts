@@ -285,6 +285,9 @@ export const requests = pgTable("requests", {
   acceptedAt: timestamp("accepted_at"),
   arrivedAt: timestamp("arrived_at"),
   tripStartedAt: timestamp("trip_started_at"),
+  deliveredAt: timestamp("delivered_at"), // Quando entregou o produto ao cliente
+  returningAt: timestamp("returning_at"), // Quando começou a voltar ao ponto de origem
+  returnedAt: timestamp("returned_at"), // Quando chegou de volta ao ponto de origem
   completedAt: timestamp("completed_at"),
   cancelledAt: timestamp("cancelled_at"),
 
@@ -303,6 +306,7 @@ export const requests = pgTable("requests", {
   totalDistance: numeric("total_distance", { precision: 10, scale: 2 }),
   totalTime: numeric("total_time", { precision: 10, scale: 2 }),
   estimatedTime: numeric("estimated_time", { precision: 10, scale: 2 }), // Tempo estimado de entrega em minutos
+  needsReturn: boolean("needs_return").notNull().default(false), // Se o motorista precisa retornar ao ponto de origem
   notes: text("notes"), // Observações da entrega
 
   // Payment (simplificado - apenas cash por enquanto)

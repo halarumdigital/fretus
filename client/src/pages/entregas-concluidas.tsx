@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Eye, MapPin, CheckCircle2, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Eye, MapPin, CheckCircle2, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
@@ -47,6 +47,7 @@ interface Delivery {
   completedAt: string | null;
   driverId: string | null;
   driverName: string | null;
+  needsReturn: boolean | null;
 }
 
 // Função helper para formatar datas no horário de Brasília
@@ -468,6 +469,19 @@ export default function EntregasConcluidas() {
                   </div>
                 </div>
               </div>
+
+              {/* Indicador de volta */}
+              {selectedDelivery.needsReturn && (
+                <div className="pt-4 border-t">
+                  <div className="flex items-center gap-2 p-3 bg-green-50 border border-green-200 rounded-md">
+                    <CheckCircle2 className="h-5 w-5 text-green-600" />
+                    <div>
+                      <p className="text-sm font-medium text-green-900">Entrega com Volta</p>
+                      <p className="text-xs text-green-700">Motorista retornou ao ponto de origem após a entrega</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {selectedDelivery.totalPrice && (
                 <div className="pt-4 border-t">

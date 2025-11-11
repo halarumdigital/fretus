@@ -71,6 +71,7 @@ interface Delivery {
   tripStartedAt: string | null;
   completedAt: string | null;
   cancellationFeePercentage: string | null;
+  needsReturn: boolean | null;
 }
 
 interface VehicleType {
@@ -125,6 +126,8 @@ const statusMap: Record<string, { label: string; color: string }> = {
   accepted: { label: "Aceito", color: "bg-blue-100 text-blue-700" },
   arrived_pickup: { label: "Cheguei para retirada", color: "bg-cyan-100 text-cyan-700" },
   in_progress: { label: "Em Andamento", color: "bg-purple-100 text-purple-700" },
+  delivered_awaiting_return: { label: "Entregue, aguardando retorno", color: "bg-teal-100 text-teal-700" },
+  returning: { label: "Retornando ao ponto de origem", color: "bg-indigo-100 text-indigo-700" },
   completed: { label: "Concluído", color: "bg-green-100 text-green-700" },
   cancelled: { label: "Cancelado", color: "bg-red-100 text-red-700" },
 };
@@ -156,6 +159,7 @@ export default function EmpresaEntregasEmAndamento() {
     pickupNeighborhood: "",
     pickupReference: "",
     vehicleTypeId: "",
+    needsReturn: false,
   });
   const [deliveryPoints, setDeliveryPoints] = useState<DeliveryPoint[]>([
     {
@@ -735,6 +739,7 @@ export default function EmpresaEntregasEmAndamento() {
                   vehicleTypeId: deliveryForm.vehicleTypeId,
                   distanceKm: distanceInKm,
                   durationMinutes: durationInMinutes,
+                  needsReturn: deliveryForm.needsReturn,
                 });
 
                 const priceResponse = await res.json();
@@ -910,6 +915,7 @@ export default function EmpresaEntregasEmAndamento() {
       customerName: validDeliveryPoints[0]?.customerName || null,
       customerWhatsapp: validDeliveryPoints[0]?.customerWhatsapp || null,
       deliveryReference: validDeliveryPoints[0]?.reference || null,
+      needsReturn: deliveryForm.needsReturn,
     });
   };
 
@@ -1052,9 +1058,12 @@ export default function EmpresaEntregasEmAndamento() {
         pickupNeighborhood: "",
         pickupReference: "",
         vehicleTypeId: "",
+        needsReturn: false,
       });
       setDeliveryPoints([{
         id: 1,
+        customerName: "",
+        customerWhatsapp: "",
         cep: "",
         address: "",
         number: "",
@@ -1416,6 +1425,19 @@ export default function EmpresaEntregasEmAndamento() {
                   </div>
                 </div>
               </div>
+
+              {/* Indicador de volta */}
+              {selectedDelivery.needsReturn && (
+                <div className="pt-4 border-t">
+                  <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                    <RefreshCw className="h-5 w-5 text-amber-600" />
+                    <div>
+                      <p className="text-sm font-medium text-amber-900">Entrega com Volta</p>
+                      <p className="text-xs text-amber-700">Motorista precisa retornar ao ponto de origem após a entrega</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {selectedDelivery.totalPrice && (
                 <div className="pt-4 border-t">
@@ -1796,6 +1818,26 @@ export default function EmpresaEntregasEmAndamento() {
                   </div>
                 </div>
               )}
+  
+              {/* Opção de Retorno - DESTACADO */}
+              <div className="flex items-center space-x-4 py-6 border-t-4 border-red-500 bg-red-50 rounded-xl p-6 shadow-lg">
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    id="needsReturn"
+                    checked={deliveryForm.needsReturn}
+                    onChange={(e) => {
+                      setDeliveryForm({ ...deliveryForm, needsReturn: e.target.checked });
+                    }}
+                    className="h-6 w-6 rounded border-red-300 text-red-600 focus:ring-red-500 focus:ring-2 focus:ring-offset-2"
+                  />
+                  <div>
+                    <Label htmlFor="needsReturn" className="text-base font-bold cursor-pointer text-red-800">
+                      ⚠️ Motorista precisa voltar após a entrega?
+                    </Label>
+                  </div>
+                </div>
+              </div>
 
               {/* Botões de Ação */}
               <div className="flex gap-2 pt-4 border-t">

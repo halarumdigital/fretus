@@ -813,7 +813,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET /api/vehicle-types - Listar categorias
   app.get("/api/vehicle-types", async (req, res) => {
     try {
-      if (!req.session.userId) {
+      // Permitir acesso para usuários admin (userId) e empresas (companyId)
+      if (!req.session.userId && !req.session.companyId) {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
@@ -1207,7 +1208,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // GET /api/company-cancellation-types - Listar tipos de cancelamento
   app.get("/api/company-cancellation-types", async (req, res) => {
     try {
-      if (!req.session.userId) {
+      // Permitir acesso tanto para admin (userId) quanto para empresas (companyId)
+      if (!req.session.userId && !req.session.companyId) {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
@@ -2189,6 +2191,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           to_char(r.accepted_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "acceptedAt",
           to_char(r.arrived_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "arrivedAt",
           to_char(r.trip_started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "tripStartedAt",
+          to_char(r.delivered_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "deliveredAt",
+          to_char(r.returning_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "returningAt",
+          to_char(r.returned_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "returnedAt",
+          r.needs_return AS "needsReturn",
           r.total_distance AS "totalDistance",
           r.total_time AS "totalTime",
           r.estimated_time AS "estimatedTime",
@@ -2206,6 +2212,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           CASE
             WHEN r.is_cancelled = true THEN 'cancelled'
             WHEN r.is_completed = true THEN 'completed'
+            WHEN r.returning_at IS NOT NULL AND r.returned_at IS NULL THEN 'returning'
+            WHEN r.delivered_at IS NOT NULL AND r.needs_return = true AND r.returning_at IS NULL THEN 'delivered_awaiting_return'
             WHEN r.is_driver_arrived = true AND r.is_trip_start = false THEN 'arrived_pickup'
             WHEN r.is_trip_start = true AND r.is_completed = false THEN 'in_progress'
             WHEN r.driver_id IS NOT NULL THEN 'accepted'
@@ -2266,6 +2274,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           to_char(r.accepted_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "acceptedAt",
           to_char(r.arrived_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "arrivedAt",
           to_char(r.trip_started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "tripStartedAt",
+          to_char(r.delivered_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "deliveredAt",
+          to_char(r.returning_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "returningAt",
+          to_char(r.returned_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "returnedAt",
+          r.needs_return AS "needsReturn",
           r.total_distance AS "totalDistance",
           r.total_time AS "totalTime",
           r.estimated_time AS "estimatedTime",
@@ -2282,6 +2294,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           CASE
             WHEN r.is_cancelled = true THEN 'cancelled'
             WHEN r.is_completed = true THEN 'completed'
+            WHEN r.returning_at IS NOT NULL AND r.returned_at IS NULL THEN 'returning'
+            WHEN r.delivered_at IS NOT NULL AND r.needs_return = true AND r.returning_at IS NULL THEN 'delivered_awaiting_return'
             WHEN r.is_driver_arrived = true AND r.is_trip_start = false THEN 'arrived_pickup'
             WHEN r.is_trip_start = true AND r.is_completed = false THEN 'in_progress'
             WHEN r.driver_id IS NOT NULL THEN 'accepted'
@@ -2362,6 +2376,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           to_char(r.accepted_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "acceptedAt",
           to_char(r.arrived_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "arrivedAt",
           to_char(r.trip_started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "tripStartedAt",
+          r.needs_return AS "needsReturn",
           r.total_distance AS "totalDistance",
           r.total_time AS "totalTime",
           r.estimated_time AS "estimatedTime",
@@ -2424,6 +2439,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           to_char(r.accepted_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "acceptedAt",
           to_char(r.arrived_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "arrivedAt",
           to_char(r.trip_started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "tripStartedAt",
+          r.needs_return AS "needsReturn",
           r.total_distance AS "totalDistance",
           r.total_time AS "totalTime",
           r.estimated_time AS "estimatedTime",
@@ -2468,7 +2484,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
-      const { vehicleTypeId, distanceKm, durationMinutes } = req.body;
+      const { vehicleTypeId, distanceKm, durationMinutes, needsReturn } = req.body;
 
       if (!vehicleTypeId || distanceKm === undefined || durationMinutes === undefined) {
         return res.status(400).json({
@@ -2550,6 +2566,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const timePrice = durationMinutes * pricePerTime;
       totalPrice += timePrice;
 
+      // Adicionar valor de retorno se o checkbox estiver marcado
+      if (needsReturn === true) {
+        totalPrice += returnPrice;
+      }
+
       // Buscar comissão da tabela settings
       const [systemSettings] = await db
         .select({ adminCommissionPercentage: settings.adminCommissionPercentage })
@@ -2578,6 +2599,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           timePrice: timePrice.toFixed(2),
           pricePerMinute: pricePerTime.toFixed(2),
           durationMinutes: durationMinutes,
+          returnPrice: returnPrice.toFixed(2),
+          needsReturn: needsReturn === true,
+          returnPriceApplied: needsReturn === true ? returnPrice.toFixed(2) : "0",
         },
         pricing: {
           stopPrice: stopPrice.toFixed(2),
@@ -2611,6 +2635,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerName,
         customerWhatsapp,
         deliveryReference,
+        needsReturn,
       } = req.body;
 
       if (!pickupAddress || !dropoffAddress || !vehicleTypeId) {
@@ -2696,14 +2721,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? parseFloat(systemSettings.adminCommissionPercentage)
         : 20; // Fallback para 20% se não houver configuração
 
+      // Calcular preço baseado na configuração
+      const basePrice = parseFloat(pricing.basePrice);
+      const pricePerDistance = parseFloat(pricing.pricePerDistance);
+      const pricePerTime = parseFloat(pricing.pricePerTime);
+      const baseDistance = parseFloat(pricing.baseDistance);
+      const returnPrice = parseFloat(pricing.returnPrice || "0");
+
+      // Calcular preço base
+      let totalPrice = basePrice;
+
+      // Calcular preço por distância (apenas se exceder a distância base)
+      const distanceInKm = distance ? parseFloat(distance) : 0;
+      const extraDistance = Math.max(0, distanceInKm - baseDistance);
+      const distancePrice = extraDistance * pricePerDistance;
+      totalPrice += distancePrice;
+
+      // Calcular preço por tempo
+      const timeInMinutes = estimatedTime ? parseFloat(estimatedTime) : 0;
+      const timePrice = timeInMinutes * pricePerTime;
+      totalPrice += timePrice;
+
+      // Adicionar valor de retorno se o checkbox estiver marcado
+      if (needsReturn === true) {
+        totalPrice += returnPrice;
+        console.log(`✅ Valor de retorno adicionado: R$ ${returnPrice.toFixed(2)}`);
+      }
+
       // Calcular comissão usando a configuração de settings
       let driverAmount = null;
       let adminCommission = null;
-      if (estimatedAmount) {
-        const totalAmount = parseFloat(estimatedAmount);
-        adminCommission = (totalAmount * (adminCommissionPercentage / 100)).toFixed(2);
-        driverAmount = (totalAmount - parseFloat(adminCommission)).toFixed(2);
+      if (totalPrice > 0) {
+        adminCommission = (totalPrice * (adminCommissionPercentage / 100)).toFixed(2);
+        driverAmount = (totalPrice - parseFloat(adminCommission)).toFixed(2);
       }
+
+      console.log(`💰 Cálculo do preço:
+  - Preço base: R$ ${basePrice.toFixed(2)}
+  - Distância: ${distanceInKm.toFixed(2)} km (extra: ${extraDistance.toFixed(2)} km)
+  - Preço por distância: R$ ${distancePrice.toFixed(2)}
+  - Tempo: ${timeInMinutes} min
+  - Preço por tempo: R$ ${timePrice.toFixed(2)}
+  - Retorno: ${needsReturn ? 'SIM' : 'NÃO'} (R$ ${returnPrice.toFixed(2)})
+  - Preço total: R$ ${totalPrice.toFixed(2)}
+  - Comissão admin (${adminCommissionPercentage}%): R$ ${adminCommission}
+  - Valor motorista: R$ ${driverAmount}`);
 
       // Create request
       // IMPORTANTE: O frontend envia distance em KM, mas o banco espera em METROS
@@ -2713,7 +2775,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   - distance enviado pelo frontend: ${distance} km
   - totalDistanceInMeters (salvo no banco): ${totalDistanceInMeters} metros
   - estimatedTime (salvo no banco): ${estimatedTime} min
-  - estimatedAmount (salvo no banco): R$ ${estimatedAmount}`);
+  - estimatedAmount (salvo no banco): R$ ${totalPrice.toFixed(2)}`);
 
       const request = await storage.createRequest({
         requestNumber,
@@ -2727,6 +2789,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalDistance: totalDistanceInMeters, // Convertido de km para metros
         totalTime: estimatedTime || null,
         requestEtaAmount: driverAmount, // Valor líquido para o motorista (após comissão)
+        needsReturn: needsReturn || false, // Salva informação sobre retorno ao ponto de origem
         isLater: false,
         isDriverStarted: false,
         isDriverArrived: false,
@@ -2750,50 +2813,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ]
       );
 
-      // Create request bill if amount is provided
-      if (estimatedAmount) {
-        // Usar valores da configuração de pricing
-        const basePrice = parseFloat(pricing.basePrice);
-        const pricePerDistance = parseFloat(pricing.pricePerDistance);
-        const pricePerTime = parseFloat(pricing.pricePerTime);
-        const baseDistance = parseFloat(pricing.baseDistance);
-
-        const distanceInKm = distance ? parseFloat(distance) : 0;
-        const timeInMinutes = estimatedTime ? parseFloat(estimatedTime) : 0;
-
-        // Calcular preço por distância excedente
-        const extraDistance = Math.max(0, distanceInKm - baseDistance);
-        const distancePrice = extraDistance * pricePerDistance;
-
-        // Calcular preço por tempo
-        const timePrice = timeInMinutes * pricePerTime;
-
-        await pool.query(
-          `INSERT INTO request_bills (
-            request_id,
-            total_amount,
-            admin_commision,
-            base_price,
-            base_distance,
-            price_per_distance,
-            distance_price,
-            price_per_time,
-            time_price
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [
-            request.id,
-            estimatedAmount,
-            adminCommission,
-            basePrice.toFixed(2),
-            baseDistance.toFixed(2),
-            pricePerDistance.toFixed(2),
-            distancePrice.toFixed(2),
-            pricePerTime.toFixed(2),
-            timePrice.toFixed(2)
-          ]
-        );
-      }
+      // Create request bill
+      await pool.query(
+        `INSERT INTO request_bills (
+          request_id,
+          total_amount,
+          admin_commision,
+          base_price,
+          base_distance,
+          price_per_distance,
+          distance_price,
+          price_per_time,
+          time_price
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          request.id,
+          totalPrice.toFixed(2),
+          adminCommission,
+          basePrice.toFixed(2),
+          baseDistance.toFixed(2),
+          pricePerDistance.toFixed(2),
+          distancePrice.toFixed(2),
+          pricePerTime.toFixed(2),
+          timePrice.toFixed(2)
+        ]
+      );
 
       // Buscar configurações de busca e timeout
       const settingsResult = await pool.query(
@@ -2868,30 +2913,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const estimatedTimeWithMargin = timeFromGoogleMaps + 5; // Adiciona 5 minutos de margem
 
           // Firebase requer que todos os valores sejam strings
-          const totalAmountStr = estimatedAmount ? parseFloat(estimatedAmount).toFixed(2) : "0";
+          const totalAmountStr = totalPrice.toFixed(2);
           const driverAmountStr = driverAmount || "0";
+
+          const notificationData = {
+            type: "new_delivery",
+            deliveryId: request.id,
+            requestNumber: requestNumber,
+            pickupAddress: pickupAddress.address,
+            dropoffAddress: dropoffAddress.address,
+            estimatedAmount: totalAmountStr, // VALOR TOTAL DA ENTREGA (mesmo que o painel da empresa mostra)
+            totalAmount: totalAmountStr, // Valor total da entrega (para referência)
+            driverAmount: driverAmountStr, // Valor que o motorista receberá após comissão
+            distance: distance?.toString() || "0",
+            estimatedTime: estimatedTimeWithMargin.toString(), // Google Maps + 5 min
+            companyName: company?.name || "", // Nome da empresa que solicitou a entrega
+            customerName: customerName || "", // Nome do cliente final (destinatário)
+            acceptanceTimeout: driverAcceptanceTimeout.toString(), // Tempo para aceitar (segundos)
+            searchTimeout: minTimeToFindDriver.toString(), // Tempo total de busca (segundos)
+            needs_return: (needsReturn || false).toString(), // Se o motorista precisa retornar ao ponto de origem
+          };
+
+          console.log(`📱 [NOTIFICAÇÃO] Enviando para ${fcmTokens.length} motoristas`);
+          console.log(`📦 [NOTIFICAÇÃO] needs_return = ${notificationData.needs_return}`);
+          console.log(`📦 [NOTIFICAÇÃO] Dados completos:`, JSON.stringify(notificationData, null, 2));
 
           // Enviar notificação para motoristas dentro do raio
           await sendPushToMultipleDevices(
             fcmTokens,
             notificationTitle,
             notificationBody,
-            {
-              type: "new_delivery",
-              deliveryId: request.id,
-              requestNumber: requestNumber,
-              pickupAddress: pickupAddress.address,
-              dropoffAddress: dropoffAddress.address,
-              estimatedAmount: driverAmountStr, // VALOR DO MOTORISTA (o que ele receberá) - app lê este campo
-              totalAmount: totalAmountStr, // Valor total da entrega (para referência)
-              driverAmount: driverAmountStr, // Mantido por compatibilidade
-              distance: distance?.toString() || "0",
-              estimatedTime: estimatedTimeWithMargin.toString(), // Google Maps + 5 min
-              companyName: company?.name || "", // Nome da empresa que solicitou a entrega
-              customerName: customerName || "", // Nome do cliente final (destinatário)
-              acceptanceTimeout: driverAcceptanceTimeout.toString(), // Tempo para aceitar (segundos)
-              searchTimeout: minTimeToFindDriver.toString(), // Tempo total de busca (segundos)
-            }
+            notificationData
           );
 
           // Salvar notificações na tabela driver_notifications
@@ -2914,7 +2966,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       return res.status(201).json({
         message: "Entrega criada com sucesso",
-        delivery: request
+        delivery: request,
+        totalPrice: totalPrice.toFixed(2),
+        driverAmount: driverAmount,
+        needsReturn: needsReturn || false,
+        returnPrice: needsReturn ? returnPrice.toFixed(2) : "0.00"
       });
     } catch (error) {
       console.error("Erro ao criar entrega:", error);
@@ -3186,6 +3242,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           dropLng: place.drop_lng?.toString() || '0',
           acceptanceTimeout: driverAcceptanceTimeout.toString(),
           searchTimeout: minTimeToFindDriver.toString(),
+          needs_return: (originalRequest.needsReturn || false).toString(),
         };
 
         console.log(`📤 Enviando notificações para ${driversWithinRadius.length} motoristas`);
@@ -3406,6 +3463,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           (r.arrived_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS "arrivedAt",
           (r.trip_started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS "tripStartedAt",
           (r.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS "completedAt",
+          r.needs_return AS "needsReturn",
           rp.pick_address AS "pickupAddress",
           rp.drop_address AS "dropoffAddress",
           rb.total_amount AS "totalPrice",
@@ -3455,6 +3513,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           (r.arrived_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS "arrivedAt",
           (r.trip_started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS "tripStartedAt",
           (r.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS "completedAt",
+          r.needs_return AS "needsReturn",
           rp.pick_address AS "pickupAddress",
           rp.drop_address AS "dropoffAddress",
           rb.total_amount AS "totalPrice",
@@ -3507,6 +3566,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           (r.arrived_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS "arrivedAt",
           (r.trip_started_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS "tripStartedAt",
           (r.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo') AS "completedAt",
+          r.needs_return AS "needsReturn",
           rp.pick_address AS "pickupAddress",
           rp.drop_address AS "dropoffAddress",
           rb.total_amount AS "totalPrice",
@@ -3891,6 +3951,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           dropLng: place.drop_lng?.toString() || '0',
           acceptanceTimeout: driverAcceptanceTimeout.toString(),
           searchTimeout: minTimeToFindDriver.toString(),
+          needs_return: (originalRequest.needsReturn || false).toString(),
           type: 'new_delivery',
         };
 
@@ -5498,7 +5559,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           r.customer_name,
           r.total_distance,
           r.total_time,
-          r.request_eta_amount,
+          r.needs_return,
           r.created_at,
           rp.pick_address,
           rp.drop_address,
@@ -5507,9 +5568,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           rp.drop_lat,
           rp.drop_lng,
           c.name as company_name,
-          vt.name as vehicle_type_name
+          vt.name as vehicle_type_name,
+          rb.total_amount,
+          rb.admin_commision
         FROM requests r
         LEFT JOIN request_places rp ON r.id = rp.request_id
+        LEFT JOIN request_bills rb ON r.id = rb.request_id
         LEFT JOIN companies c ON r.company_id = c.id
         LEFT JOIN vehicle_types vt ON r.zone_type_id = vt.id
         WHERE r.driver_id IS NULL
@@ -5519,9 +5583,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         LIMIT 50
       `);
 
+      // Formatar dados para incluir valor total da entrega
+      const formattedDeliveries = deliveries.rows.map(delivery => {
+        const totalAmount = delivery.total_amount ? parseFloat(delivery.total_amount) : 0;
+        const adminCommission = delivery.admin_commision ? parseFloat(delivery.admin_commision) : 0;
+        const driverAmount = totalAmount - adminCommission;
+
+        console.log(`[DEBUG] Delivery ${delivery.id}: total=${totalAmount}, commission=${adminCommission}, driver_will_receive=${driverAmount}`);
+
+        return {
+          ...delivery,
+          request_eta_amount: totalAmount.toFixed(2) // Enviar valor total, não o valor após comissão
+        };
+      });
+
       return res.json({
         success: true,
-        data: deliveries.rows
+        data: formattedDeliveries
       });
     } catch (error) {
       console.error("Erro ao listar entregas disponíveis:", error);
@@ -5858,7 +5936,260 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Verificar se precisa retornar ao ponto de origem
+      if (request.needsReturn) {
+        // Se precisa retornar, apenas marca como entregue mas não finaliza
+        await storage.updateRequest(deliveryId, {
+          deliveredAt: new Date(),
+        });
+
+        console.log(`✅ Status atualizado: pedido entregue, aguardando retorno`);
+
+        // Emitir evento via Socket.IO
+        const io = (app as any).io;
+        if (request.companyId) {
+          io.to(`company-${request.companyId}`).emit("delivery-status-updated", {
+            deliveryId,
+            requestNumber: request.requestNumber,
+            status: "delivered_awaiting_return",
+            statusLabel: "Entregue, aguardando retorno",
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        return res.json({
+          success: true,
+          message: "Produto entregue. Retorne ao ponto de origem para finalizar.",
+          data: {
+            status: "delivered_awaiting_return",
+            needsReturn: true
+          }
+        });
+      } else {
+        // Se não precisa retornar, finaliza a entrega normalmente
+        await storage.updateRequest(deliveryId, {
+          deliveredAt: new Date(),
+          isCompleted: true,
+          completedAt: new Date(),
+        });
+
+        // Marcar motorista como disponível (não mais em entrega)
+        await db
+          .update(drivers)
+          .set({ onDelivery: false })
+          .where(eq(drivers.id, driverId));
+
+        console.log(`✅ Status atualizado: pedido entregue e finalizado`);
+
+        // Emitir evento via Socket.IO
+        const io = (app as any).io;
+        if (request.companyId) {
+          io.to(`company-${request.companyId}`).emit("delivery-status-updated", {
+            deliveryId,
+            requestNumber: request.requestNumber,
+            status: "completed",
+            statusLabel: "Concluída",
+            timestamp: new Date().toISOString()
+          });
+        }
+
+        return res.json({
+          success: true,
+          message: "Entrega finalizada com sucesso",
+          data: {
+            status: "completed",
+            needsReturn: false
+          }
+        });
+      }
+    } catch (error) {
+      console.error("❌ Erro ao atualizar status (delivered):", error);
+      return res.status(500).json({
+        success: false,
+        message: "Erro ao atualizar status"
+      });
+    }
+  });
+
+  // POST /api/v1/driver/deliveries/:id/start-return - Iniciar retorno ao ponto de origem
+  app.post("/api/v1/driver/deliveries/:id/start-return", async (req, res) => {
+    try {
+      let driverId = req.session.driverId;
+
+      // Se não tiver sessão, tenta obter do token Bearer
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Token inválido:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
+        console.error("❌ Tentativa de atualizar status sem autenticação");
+        return res.status(401).json({
+          success: false,
+          message: "Não autenticado"
+        });
+      }
+
+      const deliveryId = req.params.id;
+
+      if (!deliveryId || deliveryId.trim() === '') {
+        console.error("❌ ID da entrega não fornecido");
+        return res.status(400).json({
+          success: false,
+          message: "ID da entrega não fornecido"
+        });
+      }
+
+      console.log(`🔄 Motorista ${driverId} iniciou retorno para entrega ${deliveryId}`);
+
+      const request = await storage.getRequest(deliveryId);
+      if (!request) {
+        console.error(`❌ Entrega ${deliveryId} não encontrada`);
+        return res.status(404).json({
+          success: false,
+          message: "Entrega não encontrada"
+        });
+      }
+
+      if (request.driverId !== driverId) {
+        console.error(`❌ Entrega ${deliveryId} não pertence ao motorista ${driverId}`);
+        return res.status(403).json({
+          success: false,
+          message: "Esta entrega não pertence a você"
+        });
+      }
+
+      if (!request.needsReturn) {
+        return res.status(400).json({
+          success: false,
+          message: "Esta entrega não requer retorno"
+        });
+      }
+
+      if (!request.deliveredAt) {
+        return res.status(400).json({
+          success: false,
+          message: "Você precisa entregar o produto primeiro"
+        });
+      }
+
       await storage.updateRequest(deliveryId, {
+        returningAt: new Date(),
+      });
+
+      console.log(`✅ Status atualizado: voltando ao ponto de origem`);
+
+      // Emitir evento via Socket.IO
+      const io = (app as any).io;
+      if (request.companyId) {
+        io.to(`company-${request.companyId}`).emit("delivery-status-updated", {
+          deliveryId,
+          requestNumber: request.requestNumber,
+          status: "returning",
+          statusLabel: "Retornando ao ponto de origem",
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Retorno iniciado",
+        data: { status: "returning" }
+      });
+    } catch (error) {
+      console.error("❌ Erro ao atualizar status (start-return):", error);
+      return res.status(500).json({
+        success: false,
+        message: "Erro ao atualizar status"
+      });
+    }
+  });
+
+  // POST /api/v1/driver/deliveries/:id/complete-return - Marcar chegada no ponto de origem
+  app.post("/api/v1/driver/deliveries/:id/complete-return", async (req, res) => {
+    try {
+      let driverId = req.session.driverId;
+
+      // Se não tiver sessão, tenta obter do token Bearer
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Token inválido:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
+        console.error("❌ Tentativa de atualizar status sem autenticação");
+        return res.status(401).json({
+          success: false,
+          message: "Não autenticado"
+        });
+      }
+
+      const deliveryId = req.params.id;
+
+      if (!deliveryId || deliveryId.trim() === '') {
+        console.error("❌ ID da entrega não fornecido");
+        return res.status(400).json({
+          success: false,
+          message: "ID da entrega não fornecido"
+        });
+      }
+
+      console.log(`✅ Motorista ${driverId} chegou de volta ao ponto de origem - entrega ${deliveryId}`);
+
+      const request = await storage.getRequest(deliveryId);
+      if (!request) {
+        console.error(`❌ Entrega ${deliveryId} não encontrada`);
+        return res.status(404).json({
+          success: false,
+          message: "Entrega não encontrada"
+        });
+      }
+
+      if (request.driverId !== driverId) {
+        console.error(`❌ Entrega ${deliveryId} não pertence ao motorista ${driverId}`);
+        return res.status(403).json({
+          success: false,
+          message: "Esta entrega não pertence a você"
+        });
+      }
+
+      if (!request.needsReturn) {
+        return res.status(400).json({
+          success: false,
+          message: "Esta entrega não requer retorno"
+        });
+      }
+
+      if (!request.returningAt) {
+        return res.status(400).json({
+          success: false,
+          message: "Você precisa iniciar o retorno primeiro"
+        });
+      }
+
+      // Marcar como retornado e completado
+      await storage.updateRequest(deliveryId, {
+        returnedAt: new Date(),
         isCompleted: true,
         completedAt: new Date(),
       });
@@ -5869,7 +6200,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .set({ onDelivery: false })
         .where(eq(drivers.id, driverId));
 
-      console.log(`✅ Status atualizado: pedido entregue`);
+      console.log(`✅ Status atualizado: retornou ao ponto de origem e entrega finalizada`);
 
       // Emitir evento via Socket.IO
       const io = (app as any).io;
@@ -5877,18 +6208,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         io.to(`company-${request.companyId}`).emit("delivery-status-updated", {
           deliveryId,
           requestNumber: request.requestNumber,
-          status: "Pedido entregue",
+          status: "completed",
+          statusLabel: "Concluída",
           timestamp: new Date().toISOString()
         });
       }
 
       return res.json({
         success: true,
-        message: "Status atualizado",
-        data: { status: "Entregue" }
+        message: "Entrega finalizada com sucesso",
+        data: { status: "completed" }
       });
     } catch (error) {
-      console.error("❌ Erro ao atualizar status (delivered):", error);
+      console.error("❌ Erro ao atualizar status (complete-return):", error);
       return res.status(500).json({
         success: false,
         message: "Erro ao atualizar status"
@@ -6024,10 +6356,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           r.is_driver_arrived,
           r.is_trip_start,
           r.is_completed,
+          r.needs_return,
+          r.delivered_at,
+          r.returning_at,
+          r.returned_at,
           r.total_distance,
           r.total_time,
           r.estimated_time,
-          r.request_eta_amount,
           r.created_at,
           r.accepted_at,
           rp.pick_address,

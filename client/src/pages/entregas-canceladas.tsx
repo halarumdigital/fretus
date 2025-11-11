@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Eye, MapPin, XCircle, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, Bell } from "lucide-react";
+import { Eye, MapPin, XCircle, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, Bell, RefreshCw } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
@@ -47,6 +47,7 @@ interface Delivery {
   arrivedAt: string | null;
   tripStartedAt: string | null;
   completedAt: string | null;
+  needsReturn: boolean | null;
 }
 
 // Função helper para formatar datas no horário de Brasília
@@ -487,6 +488,19 @@ export default function EntregasCanceladas() {
                   </div>
                 </div>
               </div>
+
+              {/* Indicador de volta */}
+              {selectedDelivery.needsReturn && (
+                <div className="pt-4 border-t">
+                  <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                    <RefreshCw className="h-5 w-5 text-amber-600" />
+                    <div>
+                      <p className="text-sm font-medium text-amber-900">Entrega com Volta</p>
+                      <p className="text-xs text-amber-700">Motorista precisava retornar ao ponto de origem após a entrega</p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {selectedDelivery.totalPrice && (
                 <div className="pt-4 border-t">

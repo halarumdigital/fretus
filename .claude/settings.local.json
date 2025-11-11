@@ -85,7 +85,12 @@
       "Bash(cmd /c \"powershell -Command \"\"Stop-Process -Id 57452,3908 -Force\"\" && timeout /t 3 /nobreak && npm run dev\")",
       "Bash(cmd /c \"powershell -Command \"\"Stop-Process -Id 57452,3908,53596,38048 -Force\"\" && timeout /t 3 /nobreak && npm run dev\")",
       "Bash(cmd /c \"taskkill /F /PID 57452 && taskkill /F /PID 3908\")",
-      "Bash(cmd /c \"taskkill /F /PID 73732 && taskkill /F /PID 71908\")"
+      "Bash(cmd /c \"taskkill /F /PID 73732 && taskkill /F /PID 71908\")",
+      "Bash(del servermigrate-add-return-timestamps.ts)",
+      "Bash(cmd /c \"powershell -Command \"\"Stop-Process -Id 10636 -Force\"\" && timeout /t 3 /nobreak && npm run dev\")",
+      "Bash(del check-delivery-prices.ts)",
+      "Bash(cmd /c \"taskkill /F /PID 38360 && timeout /t 3 /nobreak && npm run dev\")",
+      "Bash(cmd /c \"taskkill /F /PID 22304 && timeout /t 3 /nobreak && npm run dev\")"
     ],
     "deny": [],
     "ask": []
