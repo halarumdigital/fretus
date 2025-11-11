@@ -200,6 +200,112 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   });
 
+  const resolveServiceLocationIdForRequest = async (request: any): Promise<string | null> => {
+    if (request.serviceLocationId) {
+      return request.serviceLocationId;
+    }
+
+    if (!request.companyId) {
+      return null;
+    }
+
+    const { rows: companyRows } = await pool.query(
+      `SELECT city, state
+       FROM companies
+       WHERE id = $1
+       LIMIT 1`,
+      [request.companyId]
+    );
+
+    if (!companyRows.length) {
+      return null;
+    }
+
+    const companyCity = companyRows[0].city;
+    const companyState = companyRows[0].state;
+
+    if (!companyCity || !companyState) {
+      return null;
+    }
+
+    const { rows: serviceLocationRows } = await pool.query(
+      `SELECT id
+       FROM service_locations
+       WHERE LOWER(name) = LOWER($1)
+         AND LOWER(state) = LOWER($2)
+       LIMIT 1`,
+      [companyCity, companyState]
+    );
+
+    if (serviceLocationRows.length > 0) {
+      return serviceLocationRows[0].id;
+    }
+
+    return null;
+  };
+
+  const calculateCancellationFeeForRequest = async (request: any) => {
+    const result = {
+      configuredPercentage: null as number | null,
+      appliedPercentage: null as number | null,
+      amount: null as number | null,
+    };
+
+    if (!request.driverId) {
+      return result;
+    }
+
+    const serviceLocationId = await resolveServiceLocationIdForRequest(request);
+    if (!serviceLocationId) {
+      return result;
+    }
+
+    const { rows: priceRows } = await pool.query(
+      `SELECT cancellation_fee
+       FROM city_prices
+       WHERE service_location_id = $1
+         AND vehicle_type_id = $2
+         AND active = true
+       LIMIT 1`,
+      [serviceLocationId, request.zoneTypeId]
+    );
+
+    if (!priceRows.length || !priceRows[0].cancellation_fee) {
+      return result;
+    }
+
+    const configuredPercentage = parseFloat(priceRows[0].cancellation_fee);
+    if (!configuredPercentage) {
+      return result;
+    }
+
+    const { rows: billRows } = await pool.query(
+      `SELECT total_amount
+       FROM request_bills
+       WHERE request_id = $1
+       LIMIT 1`,
+      [request.id]
+    );
+
+    if (!billRows.length || !billRows[0].total_amount) {
+      return result;
+    }
+
+    const totalAmount = parseFloat(billRows[0].total_amount);
+    if (!totalAmount) {
+      return result;
+    }
+
+    const appliedPercentage = configuredPercentage;
+    const amount = totalAmount * (appliedPercentage / 100);
+
+    return {
+      configuredPercentage,
+      appliedPercentage,
+      amount,
+    };
+  };
+
   app.get("/api/auth/me", (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Não autenticado" });
@@ -2096,6 +2202,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           vt.name AS "vehicleTypeName",
           d.name AS "driverName",
           d.mobile AS "driverPhone",
+          cp.cancellation_fee AS "cancellationFeePercentage",
           CASE
             WHEN r.is_cancelled = true THEN 'cancelled'
             WHEN r.is_completed = true THEN 'completed'
@@ -2109,6 +2216,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         LEFT JOIN request_bills rb ON r.id = rb.request_id
         LEFT JOIN vehicle_types vt ON r.zone_type_id = vt.id
         LEFT JOIN drivers d ON r.driver_id = d.id
+        LEFT JOIN companies comp ON comp.id = r.company_id
+        LEFT JOIN service_locations sl ON sl.name = comp.city AND sl.state = comp.state
+        LEFT JOIN city_prices cp ON cp.service_location_id = COALESCE(r.service_location_id, sl.id)
+          AND cp.vehicle_type_id = r.zone_type_id
+          AND cp.active = true
         WHERE r.company_id = $1
         ORDER BY r.created_at DESC
       `, [req.session.companyId]);
@@ -2190,6 +2302,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Erro ao listar entregas em andamento:", error);
       return res.status(500).json({ message: "Erro ao buscar entregas em andamento" });
+    }
+  });
+
+  app.get("/api/empresa/deliveries/:id/cancellation-fee-preview", async (req, res) => {
+    try {
+      if (!req.session.companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const request = await storage.getRequest(id);
+
+      if (!request) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      if (request.companyId !== req.session.companyId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const feeInfo = await calculateCancellationFeeForRequest(request);
+
+      return res.json({
+        cancellationFee: feeInfo.amount !== null ? feeInfo.amount.toFixed(2) : null,
+        cancellationFeePercentage:
+          feeInfo.appliedPercentage !== null ? Number(feeInfo.appliedPercentage.toFixed(2)) : null,
+        cancellationFeeConfiguredPercentage:
+          feeInfo.configuredPercentage !== null ? Number(feeInfo.configuredPercentage.toFixed(2)) : null,
+      });
+    } catch (error) {
+      console.error("Erro ao calcular taxa de cancelamento (preview):", error);
+      return res.status(500).json({ message: "Erro ao calcular taxa de cancelamento" });
     }
   });
 
@@ -2509,9 +2653,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         )
         .limit(1);
 
-      if (!serviceLocation) {
+      if (!serviceLocation && !serviceLocationId) {
         return res.status(400).json({
           message: `Cidade ${company.city}/${company.state} não está cadastrada no sistema`
+        });
+      }
+
+      const resolvedServiceLocationId = serviceLocationId || serviceLocation?.id || null;
+
+      if (!resolvedServiceLocationId) {
+        return res.status(400).json({
+          message: "Não foi possível determinar a cidade da entrega"
         });
       }
 
@@ -2521,7 +2673,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from(cityPrices)
         .where(
           and(
-            eq(cityPrices.serviceLocationId, serviceLocation.id),
+            eq(cityPrices.serviceLocationId, resolvedServiceLocationId),
             eq(cityPrices.vehicleTypeId, vehicleTypeId),
             eq(cityPrices.active, true)
           )
@@ -2570,7 +2722,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         customerName: customerName || null,
         customerWhatsapp: customerWhatsapp || null,
         deliveryReference: deliveryReference || null,
-        serviceLocationId: serviceLocationId || null,
+        serviceLocationId: resolvedServiceLocationId,
         zoneTypeId: vehicleTypeId,
         totalDistance: totalDistanceInMeters, // Convertido de km para metros
         totalTime: estimatedTime || null,
@@ -3110,36 +3262,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Não é possível cancelar uma entrega já completada" });
       }
 
-      let cancellationFeeAmount = 0;
-      let cancellationFeePercentage = 0;
-
-      // Se um motorista aceitou, cobrar taxa de cancelamento
-      if (request.driverId) {
-        // Buscar taxa de cancelamento do city_prices
-        const { rows: priceRows } = await pool.query(
-          `SELECT cancellation_fee
-           FROM city_prices
-           WHERE service_location_id = $1 AND vehicle_type_id = $2
-           LIMIT 1`,
-          [request.serviceLocationId, request.zoneTypeId]
-        );
-
-        if (priceRows && priceRows.length > 0 && priceRows[0].cancellation_fee) {
-          cancellationFeePercentage = parseFloat(priceRows[0].cancellation_fee);
-
-          // Buscar valor total da entrega
-          const { rows: billRows } = await pool.query(
-            `SELECT total_amount FROM request_bills WHERE request_id = $1 LIMIT 1`,
-            [id]
-          );
-
-          if (billRows && billRows.length > 0 && billRows[0].total_amount) {
-            const totalAmount = parseFloat(billRows[0].total_amount);
-            cancellationFeeAmount = (totalAmount * (cancellationFeePercentage / 100));
-            console.log(`💰 Taxa de cancelamento: ${cancellationFeePercentage}% de R$ ${totalAmount.toFixed(2)} = R$ ${cancellationFeeAmount.toFixed(2)}`);
-          }
-        }
-      }
+      const feeInfo = await calculateCancellationFeeForRequest(request);
+      const cancellationFeeAmount = feeInfo.amount ?? 0;
+      const configuredCancellationFeePercentage = feeInfo.configuredPercentage ?? 0;
+      const appliedCancellationFeePercentage = feeInfo.appliedPercentage ?? 0;
 
       // Cancelar a entrega
       await pool.query(
@@ -3178,8 +3304,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               "Entrega Cancelada",
               "A entrega foi cancelada pela empresa.",
               {
-                type: "DELIVERY_CANCELLED",
+                type: "delivery_cancelled",
                 requestId: id,
+                deliveryId: id,
                 message: cancelReason || "Esta entrega foi cancelada pela empresa"
               }
             );
@@ -3189,6 +3316,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (io) {
               io.to(`driver-${driver.driver_id}`).emit('delivery-cancelled', {
                 requestId: id,
+                deliveryId: id,
                 requestNumber: request.requestNumber,
                 message: cancelReason || "Esta entrega foi cancelada pela empresa"
               });
@@ -3213,7 +3341,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json({
         message: "Entrega cancelada com sucesso",
         cancellationFee: cancellationFeeAmount > 0 ? cancellationFeeAmount.toFixed(2) : null,
-        cancellationFeePercentage: cancellationFeePercentage > 0 ? cancellationFeePercentage : null,
+        cancellationFeePercentage: appliedCancellationFeePercentage > 0 ? appliedCancellationFeePercentage : null,
+        cancellationFeeConfiguredPercentage: configuredCancellationFeePercentage > 0 ? configuredCancellationFeePercentage : null,
       });
     } catch (error) {
       console.error("❌ Erro ao cancelar entrega:", error);
@@ -3446,8 +3575,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             "Entrega Cancelada",
             "A entrega foi cancelada pelo administrador.",
             {
-              type: "DELIVERY_CANCELLED",
+              type: "delivery_cancelled",
               requestId: id,
+              deliveryId: id,
               message: cancelReason || "Esta entrega foi cancelada pelo administrador"
             }
           );
@@ -3460,6 +3590,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Também enviar via Socket.IO como fallback
         io.emit(`delivery_cancelled_${request.driverId}`, {
           requestId: id,
+          deliveryId: id,
           message: "Esta entrega foi cancelada pelo administrador"
         });
       }
@@ -3522,8 +3653,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           "Entrega Cancelada",
           "Esta entrega foi cancelada pelo administrador.",
           {
-            type: "DELIVERY_CANCELLED",
+            type: "delivery_cancelled",
             requestId: id,
+            deliveryId: id,
             message: request.cancelReason || "Esta entrega foi cancelada pelo administrador"
           }
         );
@@ -3539,6 +3671,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Também enviar via Socket.IO como fallback
       io.emit(`delivery_cancelled_${request.driverId}`, {
         requestId: id,
+        deliveryId: id,
         message: request.cancelReason || "Esta entrega foi cancelada pelo administrador"
       });
 

@@ -63,7 +63,18 @@ interface Delivery {
   arrivedAt: string | null;
   tripStartedAt: string | null;
   completedAt: string | null;
+  cancellationFeePercentage: string | null;
 }
+
+type CancellationPreviewState = {
+  accepted: boolean;
+  driverName?: string | null;
+  amount?: number | null;
+  appliedPercentage?: number | null;
+  configuredPercentage?: number | null;
+  isLoading?: boolean;
+  error?: string | null;
+};
 
 // Função helper para formatar datas no horário de Brasília
 // As datas vêm do banco de dados já em horário de Brasília
@@ -82,6 +93,11 @@ const statusMap: Record<string, { label: string; color: string }> = {
 };
 
 const ITEMS_PER_PAGE = 50;
+const brlFormatter = new Intl.NumberFormat("pt-BR", {
+  style: "currency",
+  currency: "BRL",
+});
+const formatCurrency = (value: number) => brlFormatter.format(value);
 
 export default function EmpresaEntregasEmAndamento() {
   const { toast } = useToast();
@@ -93,6 +109,7 @@ export default function EmpresaEntregasEmAndamento() {
   const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
   const [deliveryToCancel, setDeliveryToCancel] = useState<Delivery | null>(null);
   const [cancelTypeId, setCancelTypeId] = useState("");
+  const [cancellationPreview, setCancellationPreview] = useState<CancellationPreviewState | null>(null);
 
   // Filtros
   const [searchOrderNumber, setSearchOrderNumber] = useState("");
@@ -255,6 +272,116 @@ export default function EmpresaEntregasEmAndamento() {
     setDateFrom(undefined);
     setDateTo(undefined);
   };
+
+  const deliveryAccepted = Boolean(deliveryToCancel?.driverName || deliveryToCancel?.acceptedAt);
+
+  const renderCancellationFeeDescription = () => {
+    if (!deliveryAccepted) {
+      return "Você não terá custo pois ela ainda não foi aceita.";
+    }
+
+    if (!cancellationPreview || cancellationPreview.isLoading) {
+      return "Calculando taxa de cancelamento...";
+    }
+
+    if (typeof cancellationPreview.amount === "number") {
+      return (
+        <>
+          O cancelamento irá gerar a cobrança de{' '}
+          <span className="font-semibold">{formatCurrency(cancellationPreview.amount)}</span>
+          {typeof cancellationPreview.appliedPercentage === "number" && (
+            <>
+              {' '}
+              ({cancellationPreview.appliedPercentage.toFixed(2)}% do valor da entrega)
+            </>
+          )}
+          .
+        </>
+      );
+    }
+
+    if (cancellationPreview.error) {
+      return cancellationPreview.error;
+    }
+
+    return "Não foi possível calcular o valor da taxa de cancelamento.";
+  };
+
+  useEffect(() => {
+    if (!deliveryToCancel) {
+      setCancellationPreview(null);
+      return;
+    }
+
+    const accepted = Boolean(deliveryToCancel.driverName || deliveryToCancel.acceptedAt);
+    if (!accepted) {
+      setCancellationPreview({ accepted: false });
+      return;
+    }
+
+    let isActive = true;
+    setCancellationPreview({
+      accepted: true,
+      driverName: deliveryToCancel.driverName,
+      amount: null,
+      appliedPercentage: null,
+      configuredPercentage: null,
+      isLoading: true,
+      error: null,
+    });
+
+    (async () => {
+      try {
+        const response = await fetch(
+          `/api/empresa/deliveries/${deliveryToCancel.id}/cancellation-fee-preview`,
+          { credentials: "include" }
+        );
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.message || "Erro ao calcular taxa de cancelamento");
+        }
+
+        if (!isActive) return;
+
+        setCancellationPreview({
+          accepted: true,
+          driverName: deliveryToCancel.driverName,
+          amount:
+            data.cancellationFee !== null && data.cancellationFee !== undefined
+              ? parseFloat(data.cancellationFee)
+              : null,
+          appliedPercentage:
+            data.cancellationFeePercentage !== null && data.cancellationFeePercentage !== undefined
+              ? Number(data.cancellationFeePercentage)
+              : null,
+          configuredPercentage:
+            data.cancellationFeeConfiguredPercentage !== null &&
+            data.cancellationFeeConfiguredPercentage !== undefined
+              ? Number(data.cancellationFeeConfiguredPercentage)
+              : null,
+          isLoading: false,
+          error: null,
+        });
+      } catch (error: any) {
+        if (!isActive) return;
+
+        setCancellationPreview({
+          accepted: true,
+          driverName: deliveryToCancel.driverName,
+          amount: null,
+          appliedPercentage: null,
+          configuredPercentage: null,
+          isLoading: false,
+          error: error.message || "Erro ao calcular taxa de cancelamento.",
+        });
+      }
+    })();
+
+    return () => {
+      isActive = false;
+    };
+  }, [deliveryToCancel?.id, deliveryToCancel?.driverName, deliveryToCancel?.acceptedAt]);
 
   return (
     <div className="p-8">
@@ -631,7 +758,15 @@ export default function EmpresaEntregasEmAndamento() {
                   Você tem certeza que deseja cancelar a entrega <span className="font-mono font-bold">{deliveryToCancel.requestNumber}</span>?
                 </p>
                 <p className="text-sm text-amber-700 mt-1">
-                  Você não terá custo pois ela ainda não foi aceita.
+                  {deliveryAccepted ? (
+                    <>
+                      A entrega já foi aceita pelo entregador{" "}
+                      <span className="font-semibold">{deliveryToCancel.driverName || "o entregador"}</span>.{" "}
+                      {renderCancellationFeeDescription()}
+                    </>
+                  ) : (
+                    "Você não terá custo pois ela ainda não foi aceita."
+                  )}
                 </p>
               </div>
 
