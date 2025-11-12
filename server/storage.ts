@@ -17,6 +17,7 @@ import {
   favouriteLocations,
   requestRatings,
   settings,
+  commissionTiers,
   type User,
   type InsertUser,
   type ServiceLocation,
@@ -48,6 +49,8 @@ import {
   type RequestRating,
   type Settings,
   type InsertSettings,
+  type CommissionTier,
+  type InsertCommissionTier,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql } from "drizzle-orm";
@@ -159,6 +162,16 @@ export interface IStorage {
   // ===== SETTINGS =====
   getSettings(): Promise<Settings | undefined>;
   updateSettings(data: Partial<InsertSettings>): Promise<Settings | undefined>;
+
+  // ===== COMMISSION TIERS =====
+  getAllCommissionTiers(): Promise<CommissionTier[]>;
+  getCommissionTier(id: string): Promise<CommissionTier | undefined>;
+  createCommissionTier(data: InsertCommissionTier): Promise<CommissionTier>;
+  updateCommissionTier(id: string, data: Partial<InsertCommissionTier>): Promise<CommissionTier | undefined>;
+  deleteCommissionTier(id: string): Promise<void>;
+  getDriverCommissionPercentage(driverId: string): Promise<number>;
+  incrementDriverMonthlyDeliveries(driverId: string): Promise<void>;
+  resetMonthlyDeliveryCounters(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -937,6 +950,120 @@ export class DatabaseStorage implements IStorage {
       .where(eq(settings.id, currentSettings.id))
       .returning();
     return updated || undefined;
+  }
+
+  // ========================================
+  // COMMISSION TIERS
+  // ========================================
+  async getAllCommissionTiers(): Promise<CommissionTier[]> {
+    return await db
+      .select()
+      .from(commissionTiers)
+      .orderBy(commissionTiers.minDeliveries);
+  }
+
+  async getCommissionTier(id: string): Promise<CommissionTier | undefined> {
+    const [tier] = await db
+      .select()
+      .from(commissionTiers)
+      .where(eq(commissionTiers.id, id));
+    return tier || undefined;
+  }
+
+  async createCommissionTier(data: InsertCommissionTier): Promise<CommissionTier> {
+    const [tier] = await db
+      .insert(commissionTiers)
+      .values(data)
+      .returning();
+    return tier;
+  }
+
+  async updateCommissionTier(id: string, data: Partial<InsertCommissionTier>): Promise<CommissionTier | undefined> {
+    const [updated] = await db
+      .update(commissionTiers)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(commissionTiers.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteCommissionTier(id: string): Promise<void> {
+    await db.delete(commissionTiers).where(eq(commissionTiers.id, id));
+  }
+
+  async getDriverCommissionPercentage(driverId: string): Promise<number> {
+    // Buscar driver
+    const driver = await this.getDriver(driverId);
+    if (!driver) return 20; // Default fallback
+
+    // Buscar configurações
+    const settings = await this.getSettings();
+
+    // Se comissão está desabilitada, retorna 0
+    if (settings && !settings.enableCommission) {
+      return 0;
+    }
+
+    const monthlyCount = driver.monthlyDeliveryCount || 0;
+
+    // Buscar todas as faixas ativas ordenadas por minDeliveries
+    const tiers = await db
+      .select()
+      .from(commissionTiers)
+      .where(eq(commissionTiers.active, true))
+      .orderBy(commissionTiers.minDeliveries);
+
+    // Se não há faixas, usar comissão padrão
+    if (tiers.length === 0) {
+      return settings?.adminCommissionPercentage
+        ? parseFloat(settings.adminCommissionPercentage)
+        : 20;
+    }
+
+    // Encontrar a faixa apropriada
+    let applicableTier = null;
+    for (const tier of tiers) {
+      if (monthlyCount >= tier.minDeliveries) {
+        // Se não tem máximo OU está dentro do máximo
+        if (tier.maxDeliveries === null || monthlyCount <= tier.maxDeliveries) {
+          applicableTier = tier;
+          break;
+        }
+      }
+    }
+
+    // Se encontrou uma faixa, usa ela, senão usa a última faixa ou default
+    if (applicableTier) {
+      return parseFloat(applicableTier.commissionPercentage);
+    }
+
+    // Se passou de todas as faixas, usa a última
+    const lastTier = tiers[tiers.length - 1];
+    return parseFloat(lastTier.commissionPercentage);
+  }
+
+  async incrementDriverMonthlyDeliveries(driverId: string): Promise<void> {
+    await db
+      .update(drivers)
+      .set({
+        monthlyDeliveryCount: sql`${drivers.monthlyDeliveryCount} + 1`,
+        updatedAt: new Date(),
+      })
+      .where(eq(drivers.id, driverId));
+  }
+
+  async resetMonthlyDeliveryCounters(): Promise<void> {
+    console.log("🔄 Resetando contadores mensais de entregas...");
+
+    await db
+      .update(drivers)
+      .set({
+        monthlyDeliveryCount: 0,
+        lastMonthlyReset: new Date(),
+        updatedAt: new Date(),
+      });
+
+    console.log("✅ Contadores mensais resetados com sucesso!");
   }
 }
 

@@ -247,6 +247,10 @@ export const drivers = pgTable("drivers", {
   ratingTotal: numeric("rating_total").default("0"),
   noOfRatings: integer("no_of_ratings").default(0),
 
+  // Monthly Commission Tracking (Comissão Progressiva)
+  monthlyDeliveryCount: integer("monthly_delivery_count").notNull().default(0),
+  lastMonthlyReset: timestamp("last_monthly_reset").defaultNow(),
+
   // Location (armazenamos lat/lng simples)
   latitude: numeric("latitude", { precision: 10, scale: 7 }),
   longitude: numeric("longitude", { precision: 10, scale: 7 }),
@@ -473,6 +477,7 @@ export const settings = pgTable("settings", {
 
   // Pricing
   canRoundTripValues: boolean("can_round_trip_values").notNull().default(true),
+  enableCommission: boolean("enable_commission").notNull().default(true),
   adminCommissionPercentage: numeric("admin_commission_percentage", { precision: 5, scale: 2 }).notNull().default("20"),
 
   // OTP Settings
@@ -511,6 +516,20 @@ export const settings = pgTable("settings", {
   smtpFromEmail: varchar("smtp_from_email", { length: 255 }),
   smtpFromName: varchar("smtp_from_name", { length: 255 }),
   smtpSecure: boolean("smtp_secure").default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// COMMISSION TIERS (Comissões Progressivas)
+// ========================================
+export const commissionTiers = pgTable("commission_tiers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  minDeliveries: integer("min_deliveries").notNull(),
+  maxDeliveries: integer("max_deliveries"), // null = sem limite superior
+  commissionPercentage: numeric("commission_percentage", { precision: 5, scale: 2 }).notNull(),
+  active: boolean("active").notNull().default(true),
 
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -606,6 +625,7 @@ export const insertSettingsSchema = z.object({
 
   // Pricing
   canRoundTripValues: z.boolean(),
+  enableCommission: z.boolean(),
   adminCommissionPercentage: z.union([z.string(), z.number()]).transform(val => String(val)),
 
   // OTP Settings
@@ -717,3 +737,51 @@ export type InsertSettings = z.infer<typeof insertSettingsSchema>;
 
 export type CompanyCancellationType = typeof companyCancellationTypes.$inferSelect;
 export type InsertCompanyCancellationType = z.infer<typeof insertCompanyCancellationTypeSchema>;
+
+export const insertCommissionTierSchema = createInsertSchema(commissionTiers, {
+  minDeliveries: z.number().int().min(0, "Mínimo de entregas deve ser >= 0"),
+  maxDeliveries: z.number().int().min(1, "Máximo de entregas deve ser >= 1").nullable().optional(),
+  commissionPercentage: z.union([z.string(), z.number()]).transform(val => String(val)),
+  active: z.boolean().default(true),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type CommissionTier = typeof commissionTiers.$inferSelect;
+export type InsertCommissionTier = z.infer<typeof insertCommissionTierSchema>;
+
+// ========================================
+// PROMOTIONS (Complete e Ganhe)
+// ========================================
+export const promotions = pgTable("promotions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  type: varchar("type", { length: 50 }).notNull().default("complete_and_win"), // complete_and_win | top_performer
+  name: varchar("name", { length: 255 }).notNull(),
+  validDates: text("valid_dates").notNull(), // Array de datas específicas: "2025-11-11,2025-11-12,2025-11-15"
+  rule: text("rule").notNull(), // Descrição da regra da promoção
+  deliveryQuantity: integer("delivery_quantity"), // Para complete_and_win: meta de entregas; Para top_performer: não usado
+  prize: text("prize"), // Prêmio para top_performer
+  active: boolean("active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertPromotionSchema = createInsertSchema(promotions, {
+  type: z.enum(["complete_and_win", "top_performer"]).default("complete_and_win"),
+  name: z.string().min(1, "Nome da promoção é obrigatório"),
+  validDates: z.string().min(1, "Selecione pelo menos uma data"),
+  rule: z.string().min(1, "Descrição da regra é obrigatória"),
+  deliveryQuantity: z.number().int().min(1, "Quantidade deve ser maior que 0").nullable().optional(),
+  prize: z.string().nullable().optional(),
+  active: z.boolean().default(true),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type Promotion = typeof promotions.$inferSelect;
+export type InsertPromotion = z.infer<typeof insertPromotionSchema>;

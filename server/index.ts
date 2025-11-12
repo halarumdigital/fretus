@@ -5,6 +5,7 @@ import { Server as SocketIOServer } from "socket.io";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { startAutoCancelJob } from "./auto-cancel-deliveries";
+import { startMonthlyResetJob } from "./monthly-reset-job";
 
 const app = express();
 const httpServer = createServer(app);
@@ -96,7 +97,8 @@ app.use((req, res, next) => {
   httpServer.listen(port, "0.0.0.0", () => {
     log(`serving on port ${port}`);
 
-    // Iniciar job de auto-cancelamento de entregas
-    startAutoCancelJob(); // força reload
+    // Iniciar jobs
+    startAutoCancelJob();
+    startMonthlyResetJob();
   });
 })();

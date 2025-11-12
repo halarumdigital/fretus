@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -30,10 +30,27 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Settings, Save } from "lucide-react";
+import { Settings, Save, Plus, Pencil, Trash2 } from "lucide-react";
 
 const configuracaoSchema = z.object({
   // Driver Assignment
@@ -45,6 +62,7 @@ const configuracaoSchema = z.object({
 
   // Pricing
   canRoundTripValues: z.boolean(),
+  enableCommission: z.boolean(),
   adminCommissionPercentage: z.number().min(0).max(100),
 
   // OTP Settings
@@ -87,6 +105,16 @@ const configuracaoSchema = z.object({
 
 type ConfiguracaoForm = z.infer<typeof configuracaoSchema>;
 
+// Schema para comissões progressivas
+const commissionTierSchema = z.object({
+  minDeliveries: z.number().int().min(0, "Mínimo de entregas deve ser >= 0"),
+  maxDeliveries: z.number().int().min(1, "Máximo deve ser >= 1").nullable().optional(),
+  commissionPercentage: z.number().min(0).max(100, "Comissão deve estar entre 0 e 100"),
+  active: z.boolean().default(true),
+});
+
+type CommissionTierForm = z.infer<typeof commissionTierSchema>;
+
 const mockSettings: ConfiguracaoForm = {
   driverAssignmentType: "one_by_one",
   driverSearchRadius: 10,
@@ -94,6 +122,7 @@ const mockSettings: ConfiguracaoForm = {
   driverAcceptanceTimeout: 30,
   autoCancelTimeout: 30,
   canRoundTripValues: true,
+  enableCommission: true,
   adminCommissionPercentage: 20,
   enableOtpForLogin: false,
   enableOtpForRegistration: false,
@@ -121,6 +150,323 @@ const mockSettings: ConfiguracaoForm = {
   smtpFromName: null,
   smtpSecure: null,
 };
+
+// Componente de Comissões Progressivas
+function CommissionTiersTable({ disabled = false }: { disabled?: boolean }) {
+  const { toast } = useToast();
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingTier, setEditingTier] = useState<any>(null);
+
+  // Buscar faixas de comissão
+  const { data: tiers = [], isLoading } = useQuery({
+    queryKey: ["/api/commission-tiers"],
+  });
+
+  // Form para criar/editar faixa
+  const tierForm = useForm<CommissionTierForm>({
+    resolver: zodResolver(commissionTierSchema),
+    defaultValues: {
+      minDeliveries: 0,
+      maxDeliveries: null,
+      commissionPercentage: 20,
+      active: true,
+    },
+  });
+
+  // Mutation para criar faixa
+  const createMutation = useMutation({
+    mutationFn: async (data: CommissionTierForm) => {
+      return await apiRequest("POST", "/api/commission-tiers", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/commission-tiers"] });
+      toast({
+        title: "Sucesso!",
+        description: "Faixa de comissão criada com sucesso",
+      });
+      setIsDialogOpen(false);
+      tierForm.reset();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao criar faixa de comissão",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation para atualizar faixa
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: CommissionTierForm }) => {
+      return await apiRequest("PUT", `/api/commission-tiers/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/commission-tiers"] });
+      toast({
+        title: "Sucesso!",
+        description: "Faixa de comissão atualizada com sucesso",
+      });
+      setIsDialogOpen(false);
+      setEditingTier(null);
+      tierForm.reset();
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao atualizar faixa de comissão",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Mutation para deletar faixa
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("DELETE", `/api/commission-tiers/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/commission-tiers"] });
+      toast({
+        title: "Sucesso!",
+        description: "Faixa de comissão excluída com sucesso",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao excluir faixa de comissão",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSubmit = (data: CommissionTierForm) => {
+    if (editingTier) {
+      updateMutation.mutate({ id: editingTier.id, data });
+    } else {
+      createMutation.mutate(data);
+    }
+  };
+
+  const handleEdit = (tier: any) => {
+    setEditingTier(tier);
+    tierForm.reset({
+      minDeliveries: tier.minDeliveries,
+      maxDeliveries: tier.maxDeliveries,
+      commissionPercentage: parseFloat(tier.commissionPercentage),
+      active: tier.active,
+    });
+    setIsDialogOpen(true);
+  };
+
+  const handleDelete = (id: string) => {
+    if (confirm("Tem certeza que deseja excluir esta faixa de comissão?")) {
+      deleteMutation.mutate(id);
+    }
+  };
+
+  const handleNewTier = () => {
+    setEditingTier(null);
+    tierForm.reset({
+      minDeliveries: 0,
+      maxDeliveries: null,
+      commissionPercentage: 20,
+      active: true,
+    });
+    setIsDialogOpen(true);
+  };
+
+  return (
+    <div className={`space-y-4 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-lg font-semibold">Comissões Progressivas</h3>
+          <p className="text-sm text-muted-foreground">
+            {disabled
+              ? "Ative a cobrança de comissão para configurar faixas progressivas"
+              : "Configure comissões baseadas no número de entregas"
+            }
+          </p>
+        </div>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogTrigger asChild>
+            <Button onClick={handleNewTier} disabled={disabled}>
+              <Plus className="h-4 w-4 mr-2" />
+              Nova Faixa
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {editingTier ? "Editar Faixa de Comissão" : "Nova Faixa de Comissão"}
+              </DialogTitle>
+              <DialogDescription>
+                Configure a faixa de entregas e o percentual de comissão
+              </DialogDescription>
+            </DialogHeader>
+            <Form {...tierForm}>
+              <form onSubmit={tierForm.handleSubmit(handleSubmit)} className="space-y-4">
+                <FormField
+                  control={tierForm.control}
+                  name="minDeliveries"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Mínimo de Entregas</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          placeholder="0"
+                          {...field}
+                          onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={tierForm.control}
+                  name="maxDeliveries"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Máximo de Entregas (deixe vazio para ilimitado)</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          placeholder="Ilimitado"
+                          value={field.value || ""}
+                          onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value) : null)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={tierForm.control}
+                  name="commissionPercentage"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Comissão (%)</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="20"
+                          {...field}
+                          onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={tierForm.control}
+                  name="active"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <FormLabel>Ativa</FormLabel>
+                        <FormDescription>
+                          Ativar ou desativar esta faixa
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setIsDialogOpen(false);
+                      setEditingTier(null);
+                      tierForm.reset();
+                    }}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
+                    {editingTier ? "Atualizar" : "Criar"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      {isLoading ? (
+        <p>Carregando...</p>
+      ) : tiers.length === 0 ? (
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-center text-muted-foreground">
+              Nenhuma faixa de comissão cadastrada. Clique em "Nova Faixa" para começar.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Faixa</TableHead>
+                <TableHead>Comissão</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Ações</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tiers.map((tier: any) => (
+                <TableRow key={tier.id}>
+                  <TableCell>
+                    {tier.minDeliveries} - {tier.maxDeliveries || "∞"} entregas
+                  </TableCell>
+                  <TableCell>{parseFloat(tier.commissionPercentage).toFixed(2)}%</TableCell>
+                  <TableCell>
+                    <span
+                      className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                        tier.active
+                          ? "bg-green-100 text-green-800"
+                          : "bg-gray-100 text-gray-800"
+                      }`}
+                    >
+                      {tier.active ? "Ativa" : "Inativa"}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleEdit(tier)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDelete(tier.id)}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+    </div>
+  );
+}
 
 export default function Configuracoes() {
   const { toast } = useToast();
@@ -236,7 +582,7 @@ export default function Configuracoes() {
               <Tabs defaultValue="geral" className="w-full">
                 <TabsList className="grid w-full grid-cols-5">
                   <TabsTrigger value="geral">Geral</TabsTrigger>
-                  <TabsTrigger value="precos">Preços</TabsTrigger>
+                  <TabsTrigger value="precos">Comissão</TabsTrigger>
                   <TabsTrigger value="integracao">Integrações</TabsTrigger>
                   <TabsTrigger value="referral">Indicação</TabsTrigger>
                   <TabsTrigger value="smtp">E-mail</TabsTrigger>
@@ -422,25 +768,48 @@ export default function Configuracoes() {
 
                   <FormField
                     control={form.control}
+                    name="enableCommission"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 bg-amber-50 border-amber-200">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base font-semibold">Cobrar Comissão do App</FormLabel>
+                          <FormDescription>
+                            Ativar ou desativar totalmente a cobrança de comissão pelo aplicativo
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
                     name="adminCommissionPercentage"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Comissão Admin (%)</FormLabel>
+                        <FormLabel>Comissão Admin Padrão (%)</FormLabel>
                         <FormControl>
                           <Input
                             type="number"
                             placeholder="20"
                             value={field.value}
                             onChange={(e) => field.onChange(e.target.value ? parseFloat(e.target.value) : 0)}
+                            disabled={!form.watch("enableCommission")}
                           />
                         </FormControl>
                         <FormDescription>
-                          Porcentagem de comissão cobrada pela plataforma
+                          Porcentagem de comissão padrão (usada quando não há faixa progressiva)
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
+
+                  <div className="mt-8">
+                    <CommissionTiersTable disabled={!form.watch("enableCommission")} />
+                  </div>
                 </TabsContent>
 
                 {/* Integrações */}

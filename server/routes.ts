@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { storage } from "./storage";
-import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema } from "@shared/schema";
+import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema } from "@shared/schema";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { pool, db } from "./db";
@@ -1587,6 +1587,210 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.status(500).json({ message: "Erro ao salvar configurações" });
+    }
+  });
+
+  // ========================================
+  // COMMISSION TIERS ROUTES
+  // ========================================
+
+  // GET /api/commission-tiers - Listar todas as faixas de comissão
+  app.get("/api/commission-tiers", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const tiers = await storage.getAllCommissionTiers();
+      res.json(tiers);
+    } catch (error: any) {
+      console.error("Erro ao buscar faixas de comissão:", error);
+      res.status(500).json({ message: "Erro ao buscar faixas de comissão" });
+    }
+  });
+
+  // POST /api/commission-tiers - Criar nova faixa de comissão
+  app.post("/api/commission-tiers", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { minDeliveries, maxDeliveries, commissionPercentage, active } = req.body;
+
+      if (minDeliveries === undefined || commissionPercentage === undefined) {
+        return res.status(400).json({
+          message: "Mínimo de entregas e percentual de comissão são obrigatórios"
+        });
+      }
+
+      // Validação: maxDeliveries deve ser maior que minDeliveries
+      if (maxDeliveries !== null && maxDeliveries !== undefined && maxDeliveries <= minDeliveries) {
+        return res.status(400).json({
+          message: "Máximo de entregas deve ser maior que o mínimo"
+        });
+      }
+
+      const tier = await storage.createCommissionTier({
+        minDeliveries: Number(minDeliveries),
+        maxDeliveries: maxDeliveries ? Number(maxDeliveries) : null,
+        commissionPercentage: String(commissionPercentage),
+        active: active ?? true,
+      });
+
+      res.status(201).json(tier);
+    } catch (error: any) {
+      console.error("Erro ao criar faixa de comissão:", error);
+      res.status(500).json({ message: "Erro ao criar faixa de comissão" });
+    }
+  });
+
+  // PUT /api/commission-tiers/:id - Atualizar faixa de comissão
+  app.put("/api/commission-tiers/:id", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const { minDeliveries, maxDeliveries, commissionPercentage, active } = req.body;
+
+      // Validação: maxDeliveries deve ser maior que minDeliveries
+      if (maxDeliveries !== null && maxDeliveries !== undefined &&
+          minDeliveries !== undefined && maxDeliveries <= minDeliveries) {
+        return res.status(400).json({
+          message: "Máximo de entregas deve ser maior que o mínimo"
+        });
+      }
+
+      const updateData: any = {};
+      if (minDeliveries !== undefined) updateData.minDeliveries = Number(minDeliveries);
+      if (maxDeliveries !== undefined) updateData.maxDeliveries = maxDeliveries ? Number(maxDeliveries) : null;
+      if (commissionPercentage !== undefined) updateData.commissionPercentage = String(commissionPercentage);
+      if (active !== undefined) updateData.active = active;
+
+      const tier = await storage.updateCommissionTier(id, updateData);
+
+      if (!tier) {
+        return res.status(404).json({ message: "Faixa de comissão não encontrada" });
+      }
+
+      res.json(tier);
+    } catch (error: any) {
+      console.error("Erro ao atualizar faixa de comissão:", error);
+      res.status(500).json({ message: "Erro ao atualizar faixa de comissão" });
+    }
+  });
+
+  // DELETE /api/commission-tiers/:id - Excluir faixa de comissão
+  app.delete("/api/commission-tiers/:id", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      await storage.deleteCommissionTier(id);
+
+      res.json({ message: "Faixa de comissão excluída com sucesso" });
+    } catch (error: any) {
+      console.error("Erro ao excluir faixa de comissão:", error);
+      res.status(500).json({ message: "Erro ao excluir faixa de comissão" });
+    }
+  });
+
+  // ========================================
+  // PROMOTIONS (Complete e Ganhe) ROUTES
+  // ========================================
+
+  // GET /api/promotions - Listar todas as promoções
+  app.get("/api/promotions", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const result = await db.select().from(promotions).orderBy(promotions.createdAt);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Erro ao listar promoções:", error);
+      res.status(500).json({ message: "Erro ao listar promoções" });
+    }
+  });
+
+  // POST /api/promotions - Criar nova promoção
+  app.post("/api/promotions", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const validation = insertPromotionSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          message: "Dados inválidos",
+          errors: validation.error.errors,
+        });
+      }
+
+      const [promotion] = await db
+        .insert(promotions)
+        .values(validation.data)
+        .returning();
+
+      res.json(promotion);
+    } catch (error: any) {
+      console.error("Erro ao criar promoção:", error);
+      res.status(500).json({ message: "Erro ao criar promoção" });
+    }
+  });
+
+  // PUT /api/promotions/:id - Atualizar promoção
+  app.put("/api/promotions/:id", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      const validation = insertPromotionSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({
+          message: "Dados inválidos",
+          errors: validation.error.errors,
+        });
+      }
+
+      const [promotion] = await db
+        .update(promotions)
+        .set({ ...validation.data, updatedAt: new Date() })
+        .where(eq(promotions.id, id))
+        .returning();
+
+      res.json(promotion);
+    } catch (error: any) {
+      console.error("Erro ao atualizar promoção:", error);
+      res.status(500).json({ message: "Erro ao atualizar promoção" });
+    }
+  });
+
+  // DELETE /api/promotions/:id - Excluir promoção
+  app.delete("/api/promotions/:id", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      await db.delete(promotions).where(eq(promotions.id, id));
+
+      res.json({ message: "Promoção excluída com sucesso" });
+    } catch (error: any) {
+      console.error("Erro ao excluir promoção:", error);
+      res.status(500).json({ message: "Erro ao excluir promoção" });
     }
   });
 
@@ -4460,6 +4664,172 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // GET /api/v1/driver/commission-stats - Obter estatísticas de comissão do motorista
+  app.get("/api/v1/driver/commission-stats", async (req, res) => {
+    try {
+      let driverId = req.session.driverId;
+
+      // Se não tiver sessão, tenta obter do token Bearer
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Token inválido:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      // Buscar driver
+      const driver = await storage.getDriver(driverId);
+      if (!driver) {
+        return res.status(404).json({ message: "Motorista não encontrado" });
+      }
+
+      // Obter dados de comissão
+      const currentMonthDeliveries = driver.monthlyDeliveryCount || 0;
+      const currentCommissionPercentage = await storage.getDriverCommissionPercentage(driverId);
+
+      // Calcular início da semana atual (domingo)
+      const now = new Date();
+      const startOfWeek = new Date(now);
+      startOfWeek.setDate(now.getDate() - now.getDay()); // Volta para o domingo
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6); // Sábado
+      endOfWeek.setHours(23, 59, 59, 999);
+
+      // Contar entregas da semana atual
+      const weeklyResult = await db.execute(sql`
+        SELECT COUNT(*) as count
+        FROM requests
+        WHERE driver_id = ${driverId}
+          AND is_completed = true
+          AND completed_at >= ${startOfWeek.toISOString()}
+          AND completed_at <= ${endOfWeek.toISOString()}
+      `);
+
+      const currentWeekDeliveries = weeklyResult.rows[0]?.count
+        ? parseInt(weeklyResult.rows[0].count as string)
+        : 0;
+
+      // Buscar todas as faixas ativas ordenadas
+      const allTiers = await storage.getAllCommissionTiers();
+      const activeTiers = allTiers
+        .filter(tier => tier.active)
+        .sort((a, b) => a.minDeliveries - b.minDeliveries);
+
+      // Encontrar próxima faixa
+      let nextTier = null;
+      for (const tier of activeTiers) {
+        if (currentMonthDeliveries < tier.minDeliveries) {
+          nextTier = {
+            minDeliveries: tier.minDeliveries,
+            maxDeliveries: tier.maxDeliveries,
+            commissionPercentage: parseFloat(tier.commissionPercentage),
+            deliveriesNeeded: tier.minDeliveries - currentMonthDeliveries
+          };
+          break;
+        }
+      }
+
+      // Formatar todas as faixas para o retorno
+      const formattedTiers = activeTiers.map(tier => ({
+        minDeliveries: tier.minDeliveries,
+        maxDeliveries: tier.maxDeliveries,
+        commissionPercentage: parseFloat(tier.commissionPercentage),
+        active: tier.active
+      }));
+
+      return res.json({
+        success: true,
+        data: {
+          currentWeekDeliveries,
+          currentMonthDeliveries,
+          currentCommissionPercentage,
+          nextTier,
+          allTiers: formattedTiers
+        }
+      });
+    } catch (error) {
+      console.error("Erro ao buscar estatísticas de comissão:", error);
+      return res.status(500).json({ message: "Erro ao buscar estatísticas de comissão" });
+    }
+  });
+
+  // GET /api/v1/driver/promotions - Obter promoções ativas
+  app.get("/api/v1/driver/promotions", async (req, res) => {
+    try {
+      let driverId = req.session.driverId;
+
+      // Se não tiver sessão, tenta obter do token Bearer
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Token inválido:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      // Buscar todas as promoções ativas
+      const activePromotions = await db
+        .select()
+        .from(promotions)
+        .where(eq(promotions.active, true));
+
+      // Data de hoje no formato YYYY-MM-DD
+      const today = new Date().toISOString().split('T')[0];
+      const currentMonth = today.substring(0, 7); // YYYY-MM
+
+      // Filtrar promoções válidas do mês atual (qualquer data do mês)
+      const validPromotions = activePromotions.filter(promo => {
+        const validDates = promo.validDates.split(',');
+        // Retorna true se pelo menos uma data for do mês atual
+        return validDates.some(date => date.substring(0, 7) === currentMonth);
+      });
+
+      // Formatar resposta para o app
+      const formattedPromotions = validPromotions.map(promo => ({
+        id: promo.id,
+        type: promo.type,
+        name: promo.name,
+        description: promo.rule,
+        validDates: promo.validDates, // Enviar como string, não array
+        goal: promo.deliveryQuantity,
+        prize: promo.prize
+      }));
+
+      return res.json({
+        success: true,
+        data: formattedPromotions
+      });
+    } catch (error) {
+      console.error("Erro ao buscar promoções:", error);
+      return res.status(500).json({ message: "Erro ao buscar promoções" });
+    }
+  });
+
   // POST /api/v1/driver/profile - Atualizar perfil do motorista
   app.post("/api/v1/driver/profile", upload.single("profile_picture"), async (req, res) => {
     try {
@@ -5973,6 +6343,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           completedAt: new Date(),
         });
 
+        // Incrementar contador mensal de entregas do motorista
+        await storage.incrementDriverMonthlyDeliveries(driverId);
+
         // Marcar motorista como disponível (não mais em entrega)
         await db
           .update(drivers)
@@ -6193,6 +6566,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         isCompleted: true,
         completedAt: new Date(),
       });
+
+      // Incrementar contador mensal de entregas do motorista
+      await storage.incrementDriverMonthlyDeliveries(driverId);
 
       // Marcar motorista como disponível (não mais em entrega)
       await db
