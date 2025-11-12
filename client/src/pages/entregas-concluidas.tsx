@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { Eye, MapPin, CheckCircle2, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, RefreshCw, Star , User } from "lucide-react";
+import { Eye, MapPin, CheckCircle2, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, RefreshCw, Star, User, Phone, Info } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
@@ -633,26 +633,55 @@ export default function EntregasConcluidas() {
                     {selectedDelivery.dropoffAddress.includes(" | ") ? (
                       <div className="space-y-2">
                         {selectedDelivery.dropoffAddress.split(" | ").map((address, index) => {
-                          // Extrair nome do cliente se presente no formato [Nome] Endereço
-                          const customerNameMatch = address.match(/^\[([^\]]+)\]\s*/);
+                          // Extrair informações no formato [Nome] [WhatsApp: ...] [Ref: ...] Endereço
+                          let remainingAddress = address;
+
+                          // Extrair nome do cliente
+                          const customerNameMatch = remainingAddress.match(/^\[([^\]]+)\]\s*/);
                           const customerName = customerNameMatch ? customerNameMatch[1] : null;
-                          const addressWithoutName = customerName
-                            ? address.replace(/^\[([^\]]+)\]\s*/, '')
-                            : address;
+                          if (customerName) {
+                            remainingAddress = remainingAddress.replace(/^\[([^\]]+)\]\s*/, '');
+                          }
+
+                          // Extrair WhatsApp
+                          const whatsappMatch = remainingAddress.match(/^\[WhatsApp:\s*([^\]]+)\]\s*/);
+                          const whatsapp = whatsappMatch ? whatsappMatch[1] : null;
+                          if (whatsapp) {
+                            remainingAddress = remainingAddress.replace(/^\[WhatsApp:\s*([^\]]+)\]\s*/, '');
+                          }
+
+                          // Extrair Referência
+                          const referenceMatch = remainingAddress.match(/^\[Ref:\s*([^\]]+)\]\s*/);
+                          const reference = referenceMatch ? referenceMatch[1] : null;
+                          if (reference) {
+                            remainingAddress = remainingAddress.replace(/^\[Ref:\s*([^\]]+)\]\s*/, '');
+                          }
 
                           return (
                             <div key={index} className="flex items-start gap-2 p-3 bg-muted/30 rounded border">
                               <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold">
                                 {index + 1}
                               </span>
-                              <div className="flex-1">
+                              <div className="flex-1 space-y-1">
                                 {customerName && (
-                                  <p className="text-sm font-semibold text-primary mb-1">
+                                  <p className="text-sm font-semibold text-primary">
                                     <User className="h-3 w-3 inline mr-1" />
                                     {customerName}
                                   </p>
                                 )}
-                                <p className="font-medium text-sm">{addressWithoutName}</p>
+                                {whatsapp && (
+                                  <p className="text-xs text-muted-foreground">
+                                    <Phone className="h-3 w-3 inline mr-1" />
+                                    WhatsApp: {whatsapp}
+                                  </p>
+                                )}
+                                {reference && (
+                                  <p className="text-xs text-muted-foreground">
+                                    <Info className="h-3 w-3 inline mr-1" />
+                                    Ref: {reference}
+                                  </p>
+                                )}
+                                <p className="font-medium text-sm">{remainingAddress}</p>
                               </div>
                             </div>
                           );

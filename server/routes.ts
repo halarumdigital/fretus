@@ -3215,29 +3215,46 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
 
         for (let i = 0; i < addresses.length; i++) {
           const fullAddress = addresses[i];
+          let remainingAddress = fullAddress;
 
-          // Extrair nome do cliente se presente no formato [Nome] Endereço
-          const customerNameMatch = fullAddress.match(/^\[([^\]]+)\]\s*/);
+          // Extrair nome do cliente no formato [Nome]
+          const customerNameMatch = remainingAddress.match(/^\[([^\]]+)\]\s*/);
           const extractedCustomerName = customerNameMatch ? customerNameMatch[1] : null;
-          const addressWithoutName = customerNameMatch
-            ? fullAddress.replace(/^\[([^\]]+)\]\s*/, '')
-            : fullAddress;
+          if (extractedCustomerName) {
+            remainingAddress = remainingAddress.replace(/^\[([^\]]+)\]\s*/, '');
+          }
+
+          // Extrair WhatsApp no formato [WhatsApp: xxx]
+          const whatsappMatch = remainingAddress.match(/^\[WhatsApp:\s*([^\]]+)\]\s*/);
+          const extractedWhatsapp = whatsappMatch ? whatsappMatch[1] : null;
+          if (extractedWhatsapp) {
+            remainingAddress = remainingAddress.replace(/^\[WhatsApp:\s*([^\]]+)\]\s*/, '');
+          }
+
+          // Extrair Referência no formato [Ref: xxx]
+          const referenceMatch = remainingAddress.match(/^\[Ref:\s*([^\]]+)\]\s*/);
+          const extractedReference = referenceMatch ? referenceMatch[1] : null;
+          if (extractedReference) {
+            remainingAddress = remainingAddress.replace(/^\[Ref:\s*([^\]]+)\]\s*/, '');
+          }
 
           console.log(`📦 Stop ${i + 1}:`, {
             customerName: extractedCustomerName,
-            address: addressWithoutName
+            whatsapp: extractedWhatsapp,
+            reference: extractedReference,
+            address: remainingAddress
           });
 
           // Inserir na tabela delivery_stops
           await pool.query(
             `INSERT INTO delivery_stops (
               id, request_id, stop_order, stop_type,
-              customer_name, address,
+              customer_name, customer_whatsapp, delivery_reference, address,
               lat, lng, status,
               created_at, updated_at
             ) VALUES (
               gen_random_uuid(), $1, $2, 'delivery',
-              $3, $4,
+              $3, $4, $5, $6,
               NULL, NULL, 'pending',
               NOW(), NOW()
             )`,
@@ -3245,7 +3262,9 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
               request.id,
               i + 1, // stop_order (1, 2, 3...)
               extractedCustomerName,
-              addressWithoutName
+              extractedWhatsapp,
+              extractedReference,
+              remainingAddress
             ]
           );
         }
@@ -6482,12 +6501,20 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
         });
       }
 
-      await storage.updateRequest(deliveryId, {
+      // Verificar se tem múltiplos stops
+      const stopsResult = await pool.query(
+        `SELECT COUNT(*) as count FROM delivery_stops WHERE request_id = $1`,
+        [deliveryId]
+      );
+      const hasMultipleStops = parseInt(stopsResult.rows[0].count) > 0;
+      console.log(`📦 Entrega tem múltiplos stops? ${hasMultipleStops ? 'SIM' : 'NÃO'} (${stopsResult.rows[0].count} stops)`);
+
+      const updateResult = await storage.updateRequest(deliveryId, {
         isDriverArrived: true,
         arrivedAt: new Date(),
       });
 
-      console.log(`✅ Status atualizado: motorista chegou para retirada`);
+      console.log(`✅ Status atualizado: motorista chegou para retirada. Update result:`, updateResult ? 'SUCCESS' : 'FAILED');
 
       // Emitir evento via Socket.IO
       const io = (app as any).io;
@@ -6573,12 +6600,20 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
         });
       }
 
-      await storage.updateRequest(deliveryId, {
+      // Verificar se tem múltiplos stops
+      const stopsResult = await pool.query(
+        `SELECT COUNT(*) as count FROM delivery_stops WHERE request_id = $1`,
+        [deliveryId]
+      );
+      const hasMultipleStops = parseInt(stopsResult.rows[0].count) > 0;
+      console.log(`📦 Entrega tem múltiplos stops? ${hasMultipleStops ? 'SIM' : 'NÃO'} (${stopsResult.rows[0].count} stops)`);
+
+      const updateResult = await storage.updateRequest(deliveryId, {
         isTripStart: true,
         tripStartedAt: new Date(),
       });
 
-      console.log(`✅ Status atualizado: pedido retirado`);
+      console.log(`✅ Status atualizado: pedido retirado. Update result:`, updateResult ? 'SUCCESS' : 'FAILED');
 
       // Emitir evento via Socket.IO
       const io = (app as any).io;
