@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Eye, MapPin, XCircle, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, Bell, RefreshCw } from "lucide-react";
+import { Eye, MapPin, XCircle, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, Bell, RefreshCw , User } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
@@ -451,9 +451,43 @@ export default function EntregasCanceladas() {
                 </div>
                 <div className="flex items-start gap-2">
                   <MapPin className="h-5 w-5 text-red-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Endereço de Entrega</p>
-                    <p className="font-medium">{selectedDelivery.dropoffAddress}</p>
+                  <div className="w-full">
+                    <p className="text-sm text-muted-foreground mb-2">
+                      {selectedDelivery.dropoffAddress.includes(" | ")
+                        ? "Endereços de Entrega (Múltiplos Pontos)"
+                        : "Endereço de Entrega"}
+                    </p>
+                    {selectedDelivery.dropoffAddress.includes(" | ") ? (
+                      <div className="space-y-2">
+                        {selectedDelivery.dropoffAddress.split(" | ").map((address, index) => {
+                          // Extrair nome do cliente se presente no formato [Nome] Endereço
+                          const customerNameMatch = address.match(/^\[([^\]]+)\]\s*/);
+                          const customerName = customerNameMatch ? customerNameMatch[1] : null;
+                          const addressWithoutName = customerName
+                            ? address.replace(/^\[([^\]]+)\]\s*/, '')
+                            : address;
+
+                          return (
+                            <div key={index} className="flex items-start gap-2 p-3 bg-muted/30 rounded border">
+                              <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold">
+                                {index + 1}
+                              </span>
+                              <div className="flex-1">
+                                {customerName && (
+                                  <p className="text-sm font-semibold text-primary mb-1">
+                                    <User className="h-3 w-3 inline mr-1" />
+                                    {customerName}
+                                  </p>
+                                )}
+                                <p className="font-medium text-sm">{addressWithoutName}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="font-medium">{selectedDelivery.dropoffAddress}</p>
+                    )}
                   </div>
                 </div>
               </div>

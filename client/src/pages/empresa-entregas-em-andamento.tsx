@@ -744,10 +744,17 @@ export default function EmpresaEntregasEmAndamento() {
 
                 const priceResponse = await res.json();
 
+                const calculatedPrice = parseFloat(priceResponse.totalPrice);
+
+                console.log(`🎯 Rota calculada com ${response.routes[0].legs.length} paradas:`);
+                console.log(`  📏 Distância total: ${distanceInKm.toFixed(2)} km`);
+                console.log(`  ⏱️  Tempo total: ${durationInMinutes} min`);
+                console.log(`  💰 Preço calculado: R$ ${calculatedPrice.toFixed(2)}`);
+
                 setRouteInfo({
                   distance: distanceInKm,
                   duration: durationInMinutes,
-                  price: parseFloat(priceResponse.totalPrice),
+                  price: calculatedPrice,
                 });
               } catch (priceError: any) {
                 toast({
@@ -870,9 +877,12 @@ export default function EmpresaEntregasEmAndamento() {
       return addressParts.filter(Boolean).join(", ");
     });
 
-    const allDeliveryAddresses = deliveryAddresses.map((addr, idx) =>
-      `${validDeliveryPoints[idx].address}, ${validDeliveryPoints[idx].number || "S/N"} - ${validDeliveryPoints[idx].neighborhood}`
-    ).join(" | ");
+    const allDeliveryAddresses = deliveryAddresses.map((addr, idx) => {
+      const point = validDeliveryPoints[idx];
+      const addressPart = `${point.address}, ${point.number || "S/N"} - ${point.neighborhood}`;
+      // Incluir nome do cliente se fornecido
+      return point.customerName ? `[${point.customerName}] ${addressPart}` : addressPart;
+    }).join(" | ");
 
     const pickupCoords = await geocodeAddress(pickupFullAddress);
 
@@ -1084,13 +1094,22 @@ export default function EmpresaEntregasEmAndamento() {
 
     if (
       deliveryForm.pickupAddress &&
+      deliveryForm.pickupNumber &&
+      deliveryForm.pickupNeighborhood &&
       hasDeliveryPoint &&
       deliveryForm.vehicleTypeId &&
       window.google?.maps
     ) {
       calculateRoute();
     }
-  }, [deliveryForm.vehicleTypeId, deliveryPoints]);
+  }, [
+    deliveryForm.vehicleTypeId,
+    deliveryForm.pickupAddress,
+    deliveryForm.pickupNumber,
+    deliveryForm.pickupNeighborhood,
+    deliveryForm.needsReturn,
+    deliveryPoints,
+  ]);
 
   return (
     <div className="p-8">
@@ -1419,9 +1438,43 @@ export default function EmpresaEntregasEmAndamento() {
                 </div>
                 <div className="flex items-start gap-2">
                   <MapPin className="h-5 w-5 text-red-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Endereço de Entrega</p>
-                    <p className="font-medium">{selectedDelivery.dropoffAddress}</p>
+                  <div className="w-full">
+                    <p className="text-sm text-muted-foreground mb-2">
+                      {selectedDelivery.dropoffAddress.includes(" | ")
+                        ? "Endereços de Entrega (Múltiplos Pontos)"
+                        : "Endereço de Entrega"}
+                    </p>
+                    {selectedDelivery.dropoffAddress.includes(" | ") ? (
+                      <div className="space-y-2">
+                        {selectedDelivery.dropoffAddress.split(" | ").map((address, index) => {
+                          // Extrair nome do cliente se presente no formato [Nome] Endereço
+                          const customerNameMatch = address.match(/^\[([^\]]+)\]\s*/);
+                          const customerName = customerNameMatch ? customerNameMatch[1] : null;
+                          const addressWithoutName = customerName
+                            ? address.replace(/^\[([^\]]+)\]\s*/, '')
+                            : address;
+
+                          return (
+                            <div key={index} className="flex items-start gap-2 p-3 bg-muted/30 rounded border">
+                              <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold">
+                                {index + 1}
+                              </span>
+                              <div className="flex-1">
+                                {customerName && (
+                                  <p className="text-sm font-semibold text-primary mb-1">
+                                    <User className="h-3 w-3 inline mr-1" />
+                                    {customerName}
+                                  </p>
+                                )}
+                                <p className="font-medium text-sm">{addressWithoutName}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="font-medium">{selectedDelivery.dropoffAddress}</p>
+                    )}
                   </div>
                 </div>
               </div>

@@ -369,6 +369,41 @@ export const requestPlaces = pgTable("request_places", {
 });
 
 // ========================================
+// DELIVERY STOPS (Paradas de Entrega - Múltiplos Pontos)
+// ========================================
+export const deliveryStops = pgTable("delivery_stops", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requestId: varchar("request_id").notNull().references(() => requests.id, { onDelete: "cascade" }),
+
+  // Ordem da parada (1, 2, 3, etc.)
+  stopOrder: integer("stop_order").notNull(),
+
+  // Tipo da parada: "pickup" (coleta) ou "delivery" (entrega)
+  stopType: varchar("stop_type", { length: 20 }).notNull().default("delivery"),
+
+  // Informações do cliente (para entregas)
+  customerName: varchar("customer_name", { length: 255 }),
+  customerWhatsapp: varchar("customer_whatsapp", { length: 20 }),
+  deliveryReference: text("delivery_reference"),
+
+  // Endereço completo
+  address: text("address").notNull(),
+  lat: numeric("lat", { precision: 10, scale: 7 }),
+  lng: numeric("lng", { precision: 10, scale: 7 }),
+
+  // Status da parada
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // pending, arrived, completed, skipped
+  arrivedAt: timestamp("arrived_at"),
+  completedAt: timestamp("completed_at"),
+
+  // Observações específicas desta parada
+  notes: text("notes"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
 // REQUEST BILLS (Cobrança da Corrida)
 // ========================================
 export const requestBills = pgTable("request_bills", {
@@ -841,3 +876,24 @@ export const insertDriverCompanyRatingSchema = createInsertSchema(driverCompanyR
 
 export type DriverCompanyRating = typeof driverCompanyRatings.$inferSelect;
 export type InsertDriverCompanyRating = z.infer<typeof insertDriverCompanyRatingSchema>;
+
+// Delivery Stops
+export const insertDeliveryStopSchema = createInsertSchema(deliveryStops, {
+  stopOrder: z.number().int().min(1, "Ordem deve ser maior que 0"),
+  stopType: z.enum(["pickup", "delivery"]).default("delivery"),
+  address: z.string().min(1, "Endereço é obrigatório"),
+  lat: z.union([z.string(), z.number()]).transform(val => String(val)),
+  lng: z.union([z.string(), z.number()]).transform(val => String(val)),
+  status: z.enum(["pending", "arrived", "completed", "skipped"]).default("pending"),
+  customerName: z.string().optional(),
+  customerWhatsapp: z.string().optional(),
+  deliveryReference: z.string().optional(),
+  notes: z.string().optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type DeliveryStop = typeof deliveryStops.$inferSelect;
+export type InsertDeliveryStop = z.infer<typeof insertDeliveryStopSchema>;

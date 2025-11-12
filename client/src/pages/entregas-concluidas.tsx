@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { Eye, MapPin, CheckCircle2, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, RefreshCw, Star } from "lucide-react";
+import { Eye, MapPin, CheckCircle2, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, RefreshCw, Star , User } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
@@ -115,14 +115,14 @@ export default function EntregasConcluidas() {
   const { toast } = useToast();
 
   const { data: deliveries = [], isLoading } = useQuery<Delivery[]>({
-    queryKey: ["/api/empresa/deliveries/completed"],
+    queryKey: ["/api/admin/deliveries/completed"],
     refetchInterval: 10000, // Atualiza a cada 10 segundos
   });
 
   // Mutation para enviar avaliação
   const ratingMutation = useMutation({
     mutationFn: async ({ requestId, rating, comment }: { requestId: string; rating: number; comment?: string }) => {
-      const response = await apiRequest(`/api/empresa/deliveries/${requestId}/rate`, {
+      const response = await apiRequest(`/api/admin/deliveries/${requestId}/rate`, {
         method: "POST",
         body: JSON.stringify({ rating, comment }),
       });
@@ -133,7 +133,7 @@ export default function EntregasConcluidas() {
         title: "Avaliação enviada",
         description: "Obrigado por avaliar o motorista!",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/empresa/deliveries/completed"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/deliveries/completed"] });
       setRatingOpen(false);
       setRating(0);
       setComment("");
@@ -382,7 +382,6 @@ export default function EntregasConcluidas() {
                     <TableHead>Motorista</TableHead>
                     <TableHead>Data Conclusão</TableHead>
                     <TableHead>Valor</TableHead>
-                    <TableHead>Avaliação</TableHead>
                     <TableHead className="text-right">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -419,28 +418,6 @@ export default function EntregasConcluidas() {
                         </div>
                       ) : (
                         <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {delivery.driverId ? (
-                        delivery.companyRated ? (
-                          <Badge className="bg-green-100 text-green-700 gap-1">
-                            <Star className="h-3 w-3 fill-current" />
-                            Avaliado
-                          </Badge>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleOpenRating(delivery)}
-                            className="gap-1"
-                          >
-                            <Star className="h-4 w-4" />
-                            Avaliar
-                          </Button>
-                        )
-                      ) : (
-                        <span className="text-muted-foreground text-xs">Sem motorista</span>
                       )}
                     </TableCell>
                     <TableCell className="text-right">
@@ -647,9 +624,43 @@ export default function EntregasConcluidas() {
                 </div>
                 <div className="flex items-start gap-2">
                   <MapPin className="h-5 w-5 text-red-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Endereço de Entrega</p>
-                    <p className="font-medium">{selectedDelivery.dropoffAddress}</p>
+                  <div className="w-full">
+                    <p className="text-sm text-muted-foreground mb-2">
+                      {selectedDelivery.dropoffAddress.includes(" | ")
+                        ? "Endereços de Entrega (Múltiplos Pontos)"
+                        : "Endereço de Entrega"}
+                    </p>
+                    {selectedDelivery.dropoffAddress.includes(" | ") ? (
+                      <div className="space-y-2">
+                        {selectedDelivery.dropoffAddress.split(" | ").map((address, index) => {
+                          // Extrair nome do cliente se presente no formato [Nome] Endereço
+                          const customerNameMatch = address.match(/^\[([^\]]+)\]\s*/);
+                          const customerName = customerNameMatch ? customerNameMatch[1] : null;
+                          const addressWithoutName = customerName
+                            ? address.replace(/^\[([^\]]+)\]\s*/, '')
+                            : address;
+
+                          return (
+                            <div key={index} className="flex items-start gap-2 p-3 bg-muted/30 rounded border">
+                              <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold">
+                                {index + 1}
+                              </span>
+                              <div className="flex-1">
+                                {customerName && (
+                                  <p className="text-sm font-semibold text-primary mb-1">
+                                    <User className="h-3 w-3 inline mr-1" />
+                                    {customerName}
+                                  </p>
+                                )}
+                                <p className="font-medium text-sm">{addressWithoutName}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="font-medium">{selectedDelivery.dropoffAddress}</p>
+                    )}
                   </div>
                 </div>
               </div>

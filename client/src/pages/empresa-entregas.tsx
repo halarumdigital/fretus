@@ -1159,16 +1159,36 @@ export default function EmpresaEntregas() {
               </div>
 
               <div>
-                <label className="text-sm text-muted-foreground">
-                  {selectedDelivery.dropoffAddress?.includes(" | ") ? "Endereços de Entrega" : "Endereço de Entrega"}
+                <label className="text-sm text-muted-foreground mb-2 block">
+                  {selectedDelivery.dropoffAddress?.includes(" | ") ? "Endereços de Entrega (Múltiplos Pontos)" : "Endereço de Entrega"}
                 </label>
                 {selectedDelivery.dropoffAddress?.includes(" | ") ? (
                   <div className="space-y-2">
-                    {selectedDelivery.dropoffAddress.split(" | ").map((address, index) => (
-                      <p key={index}>
-                        <span className="font-semibold">Entrega {index + 1}:</span> {address}
-                      </p>
-                    ))}
+                    {selectedDelivery.dropoffAddress.split(" | ").map((address, index) => {
+                      // Extrair nome do cliente se presente no formato [Nome] Endereço
+                      const customerNameMatch = address.match(/^\[([^\]]+)\]\s*/);
+                      const customerName = customerNameMatch ? customerNameMatch[1] : null;
+                      const addressWithoutName = customerName
+                        ? address.replace(/^\[([^\]]+)\]\s*/, '')
+                        : address;
+
+                      return (
+                        <div key={index} className="flex items-start gap-2 p-3 bg-muted/30 rounded border">
+                          <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold">
+                            {index + 1}
+                          </span>
+                          <div className="flex-1">
+                            {customerName && (
+                              <p className="text-sm font-semibold text-primary mb-1">
+                                <User className="h-3 w-3 inline mr-1" />
+                                {customerName}
+                              </p>
+                            )}
+                            <p className="font-medium text-sm">{addressWithoutName}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p>{selectedDelivery.dropoffAddress || "-"}</p>

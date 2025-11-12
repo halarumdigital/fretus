@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { storage } from "./storage";
-import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings, driverCompanyRatings } from "@shared/schema";
+import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings, driverCompanyRatings, deliveryStops } from "@shared/schema";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { pool, db } from "./db";
@@ -118,7 +118,23 @@ declare module "express-session" {
   }
 }
 
-export async function registerRoutes(app: Express): Promise<Server> {
+export async function registerRoutes(app: Express): Promise<Server> {  // Configurar CORS para permitir credenciais
+  app.use((req, res, next) => {
+    const origin = req.headers.origin || "http://localhost:5173";
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+    // Handle preflight
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+
+    next();
+  });
+
+
   // Servir arquivos estáticos da pasta uploads
   app.use("/uploads", (req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -3192,12 +3208,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ]
       );
 
+      // Se o endereço de entrega contém múltiplos pontos, salvar na tabela delivery_stops
+      if (dropoffAddress.address && dropoffAddress.address.includes(" | ")) {
+        const addresses = dropoffAddress.address.split(" | ");
+        console.log(`📍 Detectados ${addresses.length} pontos de entrega, salvando na tabela delivery_stops`);
+
+        for (let i = 0; i < addresses.length; i++) {
+          const fullAddress = addresses[i];
+
+          // Extrair nome do cliente se presente no formato [Nome] Endereço
+          const customerNameMatch = fullAddress.match(/^\[([^\]]+)\]\s*/);
+          const extractedCustomerName = customerNameMatch ? customerNameMatch[1] : null;
+          const addressWithoutName = customerNameMatch
+            ? fullAddress.replace(/^\[([^\]]+)\]\s*/, '')
+            : fullAddress;
+
+          console.log(`📦 Stop ${i + 1}:`, {
+            customerName: extractedCustomerName,
+            address: addressWithoutName
+          });
+
+          // Inserir na tabela delivery_stops
+          await pool.query(
+            `INSERT INTO delivery_stops (
+              id, request_id, stop_order, stop_type,
+              customer_name, address,
+              lat, lng, status,
+              created_at, updated_at
+            ) VALUES (
+              gen_random_uuid(), $1, $2, 'delivery',
+              $3, $4,
+              NULL, NULL, 'pending',
+              NOW(), NOW()
+            )`,
+            [
+              request.id,
+              i + 1, // stop_order (1, 2, 3...)
+              extractedCustomerName,
+              addressWithoutName
+            ]
+          );
+        }
+
+        console.log(`✅ ${addresses.length} stops salvos na tabela delivery_stops`);
+      }
+
       // Create request bill
       await pool.query(
         `INSERT INTO request_bills (
           request_id,
           total_amount,
           admin_commision,
+          admin_commision_type,
           base_price,
           base_distance,
           price_per_distance,
@@ -3205,11 +3267,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           price_per_time,
           time_price
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
         [
           request.id,
           totalPrice.toFixed(2),
-          adminCommission,
+          adminCommission || "0.00",
+
+          "percentage",
           basePrice.toFixed(2),
           baseDistance.toFixed(2),
           pricePerDistance.toFixed(2),
@@ -3544,6 +3608,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             request_id,
             total_amount,
             admin_commision,
+          admin_commision_type,
             base_price,
             base_distance,
             price_per_distance,
@@ -6596,6 +6661,171 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Verificar se existem múltiplos stops para esta entrega
+      const stopsResult = await pool.query(
+        `SELECT * FROM delivery_stops
+         WHERE request_id = $1
+         ORDER BY stop_order ASC`,
+        [deliveryId]
+      );
+
+      // Se tem múltiplos stops, usar lógica de stops
+      if (stopsResult.rows.length > 0) {
+        console.log(`📍 Entrega com ${stopsResult.rows.length} stops encontrados`);
+
+        // Encontrar o próximo stop pendente ou em progresso
+        const currentStop = stopsResult.rows.find(
+          (stop: any) => stop.status === 'pending' || stop.status === 'arrived'
+        );
+
+        if (!currentStop) {
+          console.log(`⚠️ Nenhum stop pendente encontrado, todos já foram completados`);
+          return res.status(400).json({
+            success: false,
+            message: "Todos os stops já foram completados"
+          });
+        }
+
+        // Marcar o stop atual como completo
+        await pool.query(
+          `UPDATE delivery_stops
+           SET status = 'completed', completed_at = NOW()
+           WHERE id = $1`,
+          [currentStop.id]
+        );
+
+        console.log(`✅ Stop ${currentStop.stop_order} marcado como completo`);
+
+        // Verificar se ainda há stops pendentes
+        const remainingStops = stopsResult.rows.filter(
+          (stop: any) => stop.status === 'pending' ||
+                        (stop.id !== currentStop.id && stop.status !== 'completed')
+        );
+
+        const allStopsCompleted = remainingStops.length === 0;
+
+        if (allStopsCompleted) {
+          console.log(`✅ Todos os stops completos! Finalizando entrega...`);
+
+          // Verificar se precisa retornar ao ponto de origem
+          if (request.needsReturn) {
+            // Se precisa retornar, apenas marca como entregue mas não finaliza
+            await storage.updateRequest(deliveryId, {
+              deliveredAt: new Date(),
+            });
+
+            console.log(`✅ Todos os stops entregues, aguardando retorno`);
+
+            // Emitir evento via Socket.IO
+            const io = (app as any).io;
+            if (request.companyId) {
+              io.to(`company-${request.companyId}`).emit("delivery-status-updated", {
+                deliveryId,
+                requestNumber: request.requestNumber,
+                status: "delivered_awaiting_return",
+                statusLabel: "Entregue, aguardando retorno",
+                timestamp: new Date().toISOString()
+              });
+            }
+
+            return res.json({
+              success: true,
+              message: "Todas as entregas concluídas! Retorne ao ponto de origem para finalizar.",
+              data: {
+                status: "delivered_awaiting_return",
+                allStopsCompleted: true,
+                needsReturn: true
+              }
+            });
+          } else {
+            // Se não precisa retornar, finaliza a entrega
+            await storage.updateRequest(deliveryId, {
+              deliveredAt: new Date(),
+              isCompleted: true,
+              completedAt: new Date(),
+            });
+
+            // Incrementar contador mensal de entregas do motorista
+            await storage.incrementDriverMonthlyDeliveries(driverId);
+
+            // Marcar motorista como disponível
+            await db
+              .update(drivers)
+              .set({ onDelivery: false })
+              .where(eq(drivers.id, driverId));
+
+            console.log(`✅ Entrega finalizada completamente`);
+
+            // Emitir evento via Socket.IO
+            const io = (app as any).io;
+            if (request.companyId) {
+              io.to(`company-${request.companyId}`).emit("delivery-status-updated", {
+                deliveryId,
+                requestNumber: request.requestNumber,
+                status: "completed",
+                statusLabel: "Concluída",
+                timestamp: new Date().toISOString()
+              });
+            }
+
+            return res.json({
+              success: true,
+              message: "Entrega finalizada com sucesso",
+              data: {
+                status: "completed",
+                allStopsCompleted: true,
+                needsReturn: false
+              }
+            });
+          }
+        } else {
+          // Ainda há stops pendentes, retornar informação do próximo
+          const nextStop = remainingStops[0];
+
+          console.log(`📍 Próximo stop: ${nextStop.stop_order} - ${nextStop.address}`);
+
+          // Emitir evento via Socket.IO
+          const io = (app as any).io;
+          if (request.companyId) {
+            io.to(`company-${request.companyId}`).emit("delivery-stop-completed", {
+              deliveryId,
+              requestNumber: request.requestNumber,
+              stopOrder: currentStop.stop_order,
+              completedStops: stopsResult.rows.length - remainingStops.length,
+              totalStops: stopsResult.rows.length,
+              timestamp: new Date().toISOString()
+            });
+          }
+
+          return res.json({
+            success: true,
+            message: `Ponto ${currentStop.stop_order} entregue! Siga para o próximo ponto.`,
+            data: {
+              status: "in_progress",
+              completedStop: {
+                order: currentStop.stop_order,
+                address: currentStop.address
+              },
+              nextStop: {
+                id: nextStop.id,
+                order: nextStop.stop_order,
+                customerName: nextStop.customer_name,
+                address: nextStop.address,
+                lat: nextStop.lat,
+                lng: nextStop.lng,
+                notes: nextStop.notes
+              },
+              progress: {
+                completed: stopsResult.rows.length - remainingStops.length,
+                total: stopsResult.rows.length
+              },
+              allStopsCompleted: false
+            }
+          });
+        }
+      }
+
+      // Lógica antiga para entregas sem múltiplos stops (compatibilidade)
       // Verificar se precisa retornar ao ponto de origem
       if (request.needsReturn) {
         // Se precisa retornar, apenas marca como entregue mas não finaliza
