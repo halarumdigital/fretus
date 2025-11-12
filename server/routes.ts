@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { storage } from "./storage";
-import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema } from "@shared/schema";
+import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings } from "@shared/schema";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { pool, db } from "./db";
@@ -2575,6 +2575,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           r.is_completed AS "isCompleted",
           r.is_cancelled AS "isCancelled",
           r.cancel_reason AS "cancelReason",
+          r.company_rated AS "companyRated",
           to_char(r.cancelled_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "cancelledAt",
           to_char(r.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "completedAt",
           to_char(r.accepted_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS "acceptedAt",
@@ -2594,6 +2595,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           vt.name AS "vehicleTypeName",
           d.name AS "driverName",
           d.mobile AS "driverPhone",
+          d.rating AS "driverRating",
+          d.no_of_ratings AS "driverRatingCount",
           CASE
             WHEN r.is_cancelled = true THEN 'cancelled'
             WHEN r.is_completed = true THEN 'completed'
@@ -2678,6 +2681,142 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Erro ao listar entregas canceladas:", error);
       return res.status(500).json({ message: "Erro ao buscar entregas canceladas" });
+    }
+  });
+
+  // POST /api/empresa/deliveries/:requestId/rate - Avaliar motorista
+  app.post("/api/empresa/deliveries/:requestId/rate", async (req, res) => {
+    try {
+      if (!req.session.companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { requestId } = req.params;
+      const { rating, comment } = req.body;
+
+      // Validar dados
+      if (!rating || rating < 1 || rating > 5) {
+        return res.status(400).json({ message: "Avaliação deve ser entre 1 e 5 estrelas" });
+      }
+
+      // Verificar se a entrega existe e pertence à empresa
+      const [request] = await db
+        .select()
+        .from(requests)
+        .where(
+          and(
+            eq(requests.id, requestId),
+            eq(requests.companyId, req.session.companyId)
+          )
+        )
+        .limit(1);
+
+      if (!request) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      if (!request.isCompleted) {
+        return res.status(400).json({ message: "Apenas entregas concluídas podem ser avaliadas" });
+      }
+
+      if (!request.driverId) {
+        return res.status(400).json({ message: "Esta entrega não possui motorista" });
+      }
+
+      if (request.companyRated) {
+        return res.status(400).json({ message: "Você já avaliou esta entrega" });
+      }
+
+      // Criar avaliação
+      const [newRating] = await db
+        .insert(companyDriverRatings)
+        .values({
+          requestId,
+          companyId: req.session.companyId,
+          driverId: request.driverId,
+          rating,
+          comment: comment || null,
+        })
+        .returning();
+
+      // Marcar entrega como avaliada
+      await db
+        .update(requests)
+        .set({ companyRated: true })
+        .where(eq(requests.id, requestId));
+
+      // Atualizar avaliação média do motorista
+      const ratingsResult = await db
+        .select({
+          avgRating: sql<number>`AVG(${companyDriverRatings.rating})`,
+          totalRatings: sql<number>`COUNT(*)`,
+          sumRating: sql<number>`SUM(${companyDriverRatings.rating})`,
+        })
+        .from(companyDriverRatings)
+        .where(eq(companyDriverRatings.driverId, request.driverId));
+
+      const { avgRating, totalRatings, sumRating } = ratingsResult[0];
+
+      await db
+        .update(drivers)
+        .set({
+          rating: avgRating ? Number(avgRating).toFixed(2) : "0",
+          ratingTotal: sumRating ? Number(sumRating).toString() : "0",
+          noOfRatings: totalRatings || 0,
+        })
+        .where(eq(drivers.id, request.driverId));
+
+      return res.json({
+        message: "Avaliação registrada com sucesso",
+        rating: newRating,
+      });
+    } catch (error) {
+      console.error("Erro ao avaliar motorista:", error);
+      return res.status(500).json({ message: "Erro ao registrar avaliação" });
+    }
+  });
+
+  // GET /api/empresa/deliveries/:requestId/rating - Buscar avaliação da entrega
+  app.get("/api/empresa/deliveries/:requestId/rating", async (req, res) => {
+    try {
+      if (!req.session.companyId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { requestId } = req.params;
+
+      // Verificar se a entrega pertence à empresa
+      const [request] = await db
+        .select()
+        .from(requests)
+        .where(
+          and(
+            eq(requests.id, requestId),
+            eq(requests.companyId, req.session.companyId)
+          )
+        )
+        .limit(1);
+
+      if (!request) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Buscar avaliação
+      const [rating] = await db
+        .select()
+        .from(companyDriverRatings)
+        .where(
+          and(
+            eq(companyDriverRatings.requestId, requestId),
+            eq(companyDriverRatings.companyId, req.session.companyId)
+          )
+        )
+        .limit(1);
+
+      return res.json(rating || null);
+    } catch (error) {
+      console.error("Erro ao buscar avaliação:", error);
+      return res.status(500).json({ message: "Erro ao buscar avaliação" });
     }
   });
 
@@ -3725,6 +3864,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           c.name AS "companyName",
           r.driver_id AS "driverId",
           d.name AS "driverName",
+          d.rating AS "driverRating",
+          d.no_of_ratings AS "driverRatingCount",
+          r.company_rated AS "companyRated",
           'completed' AS status
         FROM requests r
         LEFT JOIN request_places rp ON r.id = rp.request_id

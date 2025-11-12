@@ -117,7 +117,11 @@
       "Bash(cmd /c \"taskkill /F /PID 29792\")",
       "Bash(cmd /c \"taskkill /F /PID 38020 && timeout /t 3 /nobreak && npm run dev\")",
       "Bash(cmd /c \"del fix-driver-promotions-endpoint.ts\")",
-      "Bash(cmd /c \"taskkill /F /PID 26668 && timeout /t 3 /nobreak && npm run dev\")"
+      "Bash(cmd /c \"taskkill /F /PID 26668 && timeout /t 3 /nobreak && npm run dev\")",
+      "Bash(del apply-rating-migration.ts)",
+      "Bash(cmd /c \"del apply-rating-migration.ts\")",
+      "Bash(cmd /c \"taskkill /F /PID 23056 && timeout /t 3 /nobreak && npm run dev\")",
+      "Bash(cmd /c \"del fix-driver-ratings.ts\")"
     ],
     "deny": [],
     "ask": []

@@ -14,7 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Eye, MapPin, CheckCircle2, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Eye, MapPin, CheckCircle2, Loader2, CalendarIcon, Search, X, ChevronLeft, ChevronRight, RefreshCw, Star } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import {
   Dialog,
@@ -47,7 +48,10 @@ interface Delivery {
   completedAt: string | null;
   driverId: string | null;
   driverName: string | null;
+  driverRating: string | null;
+  driverRatingCount: number | null;
   needsReturn: boolean | null;
+  companyRated: boolean | null;
 }
 
 // Função helper para formatar datas no horário de Brasília
@@ -55,6 +59,35 @@ interface Delivery {
 const formatBrazilianDateTime = (date: string | Date) => {
   const d = new Date(date);
   return format(d, 'dd/MM/yyyy, HH:mm', { locale: ptBR });
+};
+
+// Componente para exibir estrelas de avaliação
+const RatingStars = ({ rating, count }: { rating: string | null; count: number | null }) => {
+  if (!rating || rating === "0" || !count) {
+    return <span className="text-xs text-muted-foreground">Sem avaliação</span>;
+  }
+
+  const ratingValue = parseFloat(rating);
+  const fullStars = Math.floor(ratingValue);
+  const hasHalfStar = ratingValue % 1 >= 0.5;
+
+  return (
+    <div className="flex">
+      {[...Array(5)].map((_, i) => (
+        <Star
+          key={i}
+          className={cn(
+            "h-3 w-3",
+            i < fullStars
+              ? "fill-yellow-400 text-yellow-400"
+              : i === fullStars && hasHalfStar
+              ? "fill-yellow-400/50 text-yellow-400"
+              : "text-gray-300"
+          )}
+        />
+      ))}
+    </div>
+  );
 };
 
 const ITEMS_PER_PAGE = 50;
@@ -72,9 +105,47 @@ export default function EntregasConcluidas() {
   // Paginação
   const [currentPage, setCurrentPage] = useState(1);
 
+  // Avaliação
+  const [ratingOpen, setRatingOpen] = useState(false);
+  const [deliveryToRate, setDeliveryToRate] = useState<Delivery | null>(null);
+  const [rating, setRating] = useState(0);
+  const [hoverRating, setHoverRating] = useState(0);
+  const [comment, setComment] = useState("");
+
+  const { toast } = useToast();
+
   const { data: deliveries = [], isLoading } = useQuery<Delivery[]>({
-    queryKey: ["/api/admin/deliveries/completed"],
+    queryKey: ["/api/empresa/deliveries/completed"],
     refetchInterval: 10000, // Atualiza a cada 10 segundos
+  });
+
+  // Mutation para enviar avaliação
+  const ratingMutation = useMutation({
+    mutationFn: async ({ requestId, rating, comment }: { requestId: string; rating: number; comment?: string }) => {
+      const response = await apiRequest(`/api/empresa/deliveries/${requestId}/rate`, {
+        method: "POST",
+        body: JSON.stringify({ rating, comment }),
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: "Avaliação enviada",
+        description: "Obrigado por avaliar o motorista!",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/empresa/deliveries/completed"] });
+      setRatingOpen(false);
+      setRating(0);
+      setComment("");
+      setDeliveryToRate(null);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao enviar avaliação",
+        description: error.message || "Tente novamente mais tarde",
+        variant: "destructive",
+      });
+    },
   });
 
   // Filtrar entregas
@@ -136,6 +207,30 @@ export default function EntregasConcluidas() {
   const handleViewDetails = (delivery: Delivery) => {
     setSelectedDelivery(delivery);
     setDetailsOpen(true);
+  };
+
+  const handleOpenRating = (delivery: Delivery) => {
+    setDeliveryToRate(delivery);
+    setRating(0);
+    setComment("");
+    setRatingOpen(true);
+  };
+
+  const handleSubmitRating = () => {
+    if (!deliveryToRate || rating === 0) {
+      toast({
+        title: "Erro",
+        description: "Selecione uma avaliação de 1 a 5 estrelas",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    ratingMutation.mutate({
+      requestId: deliveryToRate.id,
+      rating,
+      comment: comment.trim() || undefined,
+    });
   };
 
   const clearFilters = () => {
@@ -287,6 +382,7 @@ export default function EntregasConcluidas() {
                     <TableHead>Motorista</TableHead>
                     <TableHead>Data Conclusão</TableHead>
                     <TableHead>Valor</TableHead>
+                    <TableHead>Avaliação</TableHead>
                     <TableHead className="text-right">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -301,7 +397,14 @@ export default function EntregasConcluidas() {
                     </TableCell>
                     <TableCell>{delivery.companyName}</TableCell>
                     <TableCell>
-                      {delivery.driverName || <span className="text-muted-foreground italic">-</span>}
+                      {delivery.driverName ? (
+                        <div className="space-y-1">
+                          <div className="font-medium">{delivery.driverName}</div>
+                          <RatingStars rating={delivery.driverRating} count={delivery.driverRatingCount} />
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground italic">-</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       {delivery.completedAt ? formatBrazilianDateTime(delivery.completedAt) : "-"}
@@ -316,6 +419,28 @@ export default function EntregasConcluidas() {
                         </div>
                       ) : (
                         <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {delivery.driverId ? (
+                        delivery.companyRated ? (
+                          <Badge className="bg-green-100 text-green-700 gap-1">
+                            <Star className="h-3 w-3 fill-current" />
+                            Avaliado
+                          </Badge>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleOpenRating(delivery)}
+                            className="gap-1"
+                          >
+                            <Star className="h-4 w-4" />
+                            Avaliar
+                          </Button>
+                        )
+                      ) : (
+                        <span className="text-muted-foreground text-xs">Sem motorista</span>
                       )}
                     </TableCell>
                     <TableCell className="text-right">
@@ -364,6 +489,96 @@ export default function EntregasConcluidas() {
           )}
         </CardContent>
       </Card>
+
+      {/* Dialog de avaliação */}
+      <Dialog open={ratingOpen} onOpenChange={setRatingOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Avaliar Motorista</DialogTitle>
+          </DialogHeader>
+          {deliveryToRate && (
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm text-muted-foreground mb-1">Motorista</p>
+                <p className="font-semibold">{deliveryToRate.driverName}</p>
+              </div>
+
+              <div>
+                <p className="text-sm text-muted-foreground mb-1">Pedido</p>
+                <p className="font-mono text-sm">{deliveryToRate.requestNumber}</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Sua Avaliação</Label>
+                <div className="flex gap-2 justify-center py-4">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setRating(star)}
+                      onMouseEnter={() => setHoverRating(star)}
+                      onMouseLeave={() => setHoverRating(0)}
+                      className="focus:outline-none transition-transform hover:scale-110"
+                    >
+                      <Star
+                        className={cn(
+                          "h-10 w-10 transition-colors",
+                          (hoverRating >= star || rating >= star)
+                            ? "fill-yellow-400 text-yellow-400"
+                            : "text-gray-300"
+                        )}
+                      />
+                    </button>
+                  ))}
+                </div>
+                {rating > 0 && (
+                  <p className="text-center text-sm text-muted-foreground">
+                    {rating === 1 && "Muito ruim"}
+                    {rating === 2 && "Ruim"}
+                    {rating === 3 && "Regular"}
+                    {rating === 4 && "Bom"}
+                    {rating === 5 && "Excelente"}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="comment">Comentário (opcional)</Label>
+                <Textarea
+                  id="comment"
+                  placeholder="Deixe um comentário sobre o motorista..."
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  rows={4}
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => setRatingOpen(false)}
+                  disabled={ratingMutation.isPending}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={handleSubmitRating}
+                  disabled={ratingMutation.isPending || rating === 0}
+                >
+                  {ratingMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Enviando...
+                    </>
+                  ) : (
+                    "Enviar Avaliação"
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog de detalhes */}
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>

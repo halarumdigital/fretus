@@ -320,6 +320,7 @@ export const requests = pgTable("requests", {
   // Ratings
   userRated: boolean("user_rated").notNull().default(false),
   driverRated: boolean("driver_rated").notNull().default(false),
+  companyRated: boolean("company_rated").notNull().default(false), // Se a empresa avaliou o motorista
 
   // Config
   timezone: varchar("timezone", { length: 100 }).default("America/Sao_Paulo"),
@@ -437,6 +438,20 @@ export const requestRatings = pgTable("request_ratings", {
   userId: varchar("user_id").notNull().references(() => users.id),
   driverId: varchar("driver_id").notNull().references(() => drivers.id),
   rating: integer("rating").notNull(),
+  comment: text("comment"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ========================================
+// COMPANY DRIVER RATINGS (Avaliações de Empresas sobre Motoristas)
+// ========================================
+export const companyDriverRatings = pgTable("company_driver_ratings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requestId: varchar("request_id").notNull().references(() => requests.id),
+  companyId: varchar("company_id").notNull().references(() => companies.id),
+  driverId: varchar("driver_id").notNull().references(() => drivers.id),
+  rating: integer("rating").notNull(), // 1-5 estrelas
   comment: text("comment"),
 
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -785,3 +800,15 @@ export const insertPromotionSchema = createInsertSchema(promotions, {
 
 export type Promotion = typeof promotions.$inferSelect;
 export type InsertPromotion = z.infer<typeof insertPromotionSchema>;
+
+// Company Driver Ratings
+export const insertCompanyDriverRatingSchema = createInsertSchema(companyDriverRatings, {
+  rating: z.number().int().min(1, "Avaliação deve ser entre 1 e 5").max(5, "Avaliação deve ser entre 1 e 5"),
+  comment: z.string().optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type CompanyDriverRating = typeof companyDriverRatings.$inferSelect;
+export type InsertCompanyDriverRating = z.infer<typeof insertCompanyDriverRatingSchema>;
