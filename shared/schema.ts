@@ -900,3 +900,56 @@ export const insertDeliveryStopSchema = createInsertSchema(deliveryStops, {
 
 export type DeliveryStop = typeof deliveryStops.$inferSelect;
 export type InsertDeliveryStop = z.infer<typeof insertDeliveryStopSchema>;
+
+// ========================================
+// PUSH NOTIFICATIONS (Notificações Push)
+// ========================================
+export const pushNotifications = pgTable("push_notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Informações da notificação
+  title: varchar("title", { length: 255 }).notNull(),
+  body: text("body").notNull(),
+  data: text("data"), // JSON string com dados adicionais
+
+  // Destinatário(s)
+  targetType: varchar("target_type", { length: 20 }).notNull(), // 'driver', 'city'
+  targetId: varchar("target_id"), // ID do motorista específico
+  targetCityId: varchar("target_city_id").references(() => serviceLocations.id), // ID da cidade
+
+  // Status
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // pending, sent, failed
+  errorMessage: text("error_message"),
+
+  // Contadores
+  totalRecipients: integer("total_recipients").default(0),
+  successCount: integer("success_count").default(0),
+  failureCount: integer("failure_count").default(0),
+
+  // Admin que enviou
+  sentBy: varchar("sent_by").references(() => users.id),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  sentAt: timestamp("sent_at"),
+});
+
+export const insertPushNotificationSchema = createInsertSchema(pushNotifications, {
+  title: z.string().min(1, "Título é obrigatório"),
+  body: z.string().min(1, "Mensagem é obrigatória"),
+  data: z.string().optional(),
+  targetType: z.enum(["driver", "city"]),
+  targetId: z.string().optional(),
+  targetCityId: z.string().optional(),
+  status: z.enum(["pending", "sent", "failed"]).default("pending"),
+  errorMessage: z.string().optional(),
+  totalRecipients: z.number().int().default(0),
+  successCount: z.number().int().default(0),
+  failureCount: z.number().int().default(0),
+}).omit({
+  id: true,
+  createdAt: true,
+  sentAt: true,
+});
+
+export type PushNotification = typeof pushNotifications.$inferSelect;
+export type InsertPushNotification = z.infer<typeof insertPushNotificationSchema>;

@@ -7798,6 +7798,261 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
 
   const httpServer = createServer(app);
 
+  // ===========================================
+  // ROTAS DE NOTIFICAÇÕES PUSH
+  // ===========================================
+
+  // GET /api/notifications - Listar notificações enviadas
+  app.get("/api/notifications", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado - Apenas administradores" });
+    }
+
+    try {
+      const { pushNotifications } = await import("@shared/schema");
+      const notifications = await db
+        .select({
+          id: pushNotifications.id,
+          title: pushNotifications.title,
+          body: pushNotifications.body,
+          targetType: pushNotifications.targetType,
+          targetId: pushNotifications.targetId,
+          targetCityId: pushNotifications.targetCityId,
+          status: pushNotifications.status,
+          errorMessage: pushNotifications.errorMessage,
+          totalRecipients: pushNotifications.totalRecipients,
+          successCount: pushNotifications.successCount,
+          failureCount: pushNotifications.failureCount,
+          createdAt: pushNotifications.createdAt,
+          sentAt: pushNotifications.sentAt,
+          cityName: serviceLocations.name,
+          driverName: drivers.name
+        })
+        .from(pushNotifications)
+        .leftJoin(serviceLocations, eq(pushNotifications.targetCityId, serviceLocations.id))
+        .leftJoin(drivers, eq(pushNotifications.targetId, drivers.id))
+        .orderBy(sql`${pushNotifications.createdAt} DESC`);
+
+      res.json(notifications);
+    } catch (error) {
+      console.error("Erro ao buscar notificações:", error);
+      res.status(500).json({ message: "Erro ao buscar notificações" });
+    }
+  });
+
+  // POST /api/notifications/send - Enviar notificação
+  app.post("/api/notifications/send", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado - Apenas administradores" });
+    }
+
+    try {
+      const { title, body, targetType, targetId, targetCityId } = req.body;
+
+      if (!title || !body || !targetType) {
+        return res.status(400).json({
+          message: "Título, mensagem e tipo de destino são obrigatórios"
+        });
+      }
+
+      if (targetType === 'driver' && !targetId) {
+        return res.status(400).json({
+          message: "ID do motorista é obrigatório para notificação individual"
+        });
+      }
+
+      if (targetType === 'city' && !targetCityId) {
+        return res.status(400).json({
+          message: "ID da cidade é obrigatório para notificação por cidade"
+        });
+      }
+
+      // Importar pushNotifications do schema
+      const { pushNotifications } = await import("@shared/schema");
+
+      // Criar registro da notificação
+      const [notification] = await db.insert(pushNotifications).values({
+        title,
+        body,
+        targetType,
+        targetId: targetType === 'driver' ? targetId : null,
+        targetCityId: targetType === 'city' ? targetCityId : null,
+        status: 'pending',
+        sentBy: req.session.userId
+      }).returning();
+
+      // Buscar tokens dos destinatários
+      let tokens: string[] = [];
+      let driversToNotify = [];
+
+      if (targetType === 'driver') {
+        // Notificação individual
+        const driver = await db
+          .select()
+          .from(drivers)
+          .where(eq(drivers.id, targetId))
+          .limit(1);
+
+        if (driver[0]?.fcmToken) {
+          tokens.push(driver[0].fcmToken);
+          driversToNotify.push(driver[0]);
+        }
+      } else if (targetType === 'city') {
+        // Notificação para todos os motoristas da cidade
+        const cityDrivers = await db
+          .select()
+          .from(drivers)
+          .where(
+            and(
+              eq(drivers.serviceLocationId, targetCityId),
+              eq(drivers.active, true)
+            )
+          );
+
+        driversToNotify = cityDrivers;
+        tokens = cityDrivers
+          .filter(d => d.fcmToken)
+          .map(d => d.fcmToken!);
+      }
+
+      if (tokens.length === 0) {
+        await db.update(pushNotifications)
+          .set({
+            status: 'failed',
+            errorMessage: 'Nenhum token FCM encontrado para os destinatários',
+            sentAt: new Date()
+          })
+          .where(eq(pushNotifications.id, notification.id));
+
+        return res.status(200).json({
+          success: false,
+          message: "Nenhum dispositivo registrado para receber notificações",
+          notification
+        });
+      }
+
+      // Enviar notificações via Firebase
+      try {
+        const results = await sendPushToMultipleDevices(tokens, title, body, {
+          notificationId: notification.id,
+          timestamp: new Date().toISOString()
+        });
+
+        const successCount = results.filter(r => r.success).length;
+        const failureCount = results.filter(r => !r.success).length;
+
+        // Atualizar status da notificação
+        await db.update(pushNotifications)
+          .set({
+            status: successCount > 0 ? 'sent' : 'failed',
+            totalRecipients: tokens.length,
+            successCount,
+            failureCount,
+            sentAt: new Date(),
+            errorMessage: failureCount > 0 ? `${failureCount} falhas ao enviar` : null
+          })
+          .where(eq(pushNotifications.id, notification.id));
+
+        res.json({
+          success: true,
+          message: `Notificação enviada com sucesso para ${successCount} dispositivo(s)`,
+          notification: {
+            ...notification,
+            totalRecipients: tokens.length,
+            successCount,
+            failureCount
+          }
+        });
+      } catch (error) {
+        console.error("Erro ao enviar push notifications:", error);
+
+        await db.update(pushNotifications)
+          .set({
+            status: 'failed',
+            errorMessage: error instanceof Error ? error.message : 'Erro desconhecido',
+            sentAt: new Date()
+          })
+          .where(eq(pushNotifications.id, notification.id));
+
+        throw error;
+      }
+    } catch (error) {
+      console.error("Erro ao enviar notificação:", error);
+      res.status(500).json({
+        message: "Erro ao enviar notificação",
+        error: error instanceof Error ? error.message : 'Erro desconhecido'
+      });
+    }
+  });
+
+  // GET /api/notifications/cities - Listar cidades para seleção
+  app.get("/api/notifications/cities", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    try {
+      // Buscar cidades com contagem de motoristas ativos
+      const cities = await db
+        .select({
+          id: serviceLocations.id,
+          name: serviceLocations.name,
+          state: serviceLocations.state,
+          driverCount: sql<number>`COUNT(DISTINCT ${drivers.id})::int`
+        })
+        .from(serviceLocations)
+        .leftJoin(
+          drivers,
+          and(
+            eq(drivers.serviceLocationId, serviceLocations.id),
+            eq(drivers.active, true)
+          )
+        )
+        .where(eq(serviceLocations.active, true))
+        .groupBy(serviceLocations.id, serviceLocations.name, serviceLocations.state)
+        .orderBy(serviceLocations.name);
+
+      res.json(cities);
+    } catch (error) {
+      console.error("Erro ao buscar cidades:", error);
+      res.status(500).json({ message: "Erro ao buscar cidades" });
+    }
+  });
+
+  // GET /api/notifications/drivers/:cityId - Listar motoristas de uma cidade
+  app.get("/api/notifications/drivers/:cityId", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const { cityId } = req.params;
+
+    try {
+      const cityDrivers = await db
+        .select({
+          id: drivers.id,
+          name: drivers.name,
+          mobile: drivers.mobile,
+          carModel: drivers.carModel,
+          carNumber: drivers.carNumber,
+          hasToken: sql<boolean>`${drivers.fcmToken} IS NOT NULL`
+        })
+        .from(drivers)
+        .where(
+          and(
+            eq(drivers.serviceLocationId, cityId),
+            eq(drivers.active, true)
+          )
+        )
+        .orderBy(drivers.name);
+
+      res.json(cityDrivers);
+    } catch (error) {
+      console.error("Erro ao buscar motoristas:", error);
+      res.status(500).json({ message: "Erro ao buscar motoristas" });
+    }
+  });
+
   // Configurar Socket.IO
   const io = new SocketIOServer(httpServer, {
     cors: {
