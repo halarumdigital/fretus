@@ -458,28 +458,59 @@ export default function EntregasCanceladas() {
                         : "Endereço de Entrega"}
                     </p>
                     {selectedDelivery.dropoffAddress.includes(" | ") ? (
-                      <div className="space-y-2">
+                      <div className="space-y-3">
                         {selectedDelivery.dropoffAddress.split(" | ").map((address, index) => {
-                          // Extrair nome do cliente se presente no formato [Nome] Endereço
-                          const customerNameMatch = address.match(/^\[([^\]]+)\]\s*/);
-                          const customerName = customerNameMatch ? customerNameMatch[1] : null;
-                          const addressWithoutName = customerName
-                            ? address.replace(/^\[([^\]]+)\]\s*/, '')
-                            : address;
+                          let customerName = null;
+                          let whatsapp = null;
+                          let reference = null;
+                          let addressText = address;
+
+                          // Extrair WhatsApp: [WhatsApp: xxx]
+                          const whatsappMatch = addressText.match(/\[WhatsApp:\s*([^\]]+)\]/i);
+                          if (whatsappMatch) {
+                            whatsapp = whatsappMatch[1].trim();
+                            addressText = addressText.replace(/\[WhatsApp:\s*[^\]]+\]\s*/i, '').trim();
+                          }
+
+                          // Extrair Ref: [Ref: xxx]
+                          const refMatch = addressText.match(/\[Ref:\s*([^\]]+)\]/i);
+                          if (refMatch) {
+                            reference = refMatch[1].trim();
+                            addressText = addressText.replace(/\[Ref:\s*[^\]]+\]\s*/i, '').trim();
+                          }
+
+                          // Extrair nome do cliente: [nome]
+                          const nameMatch = addressText.match(/^\[([^\]]+)\]/);
+                          if (nameMatch) {
+                            customerName = nameMatch[1].trim();
+                            addressText = addressText.replace(/^\[([^\]]+)\]\s*/, '').trim();
+                          }
 
                           return (
-                            <div key={index} className="flex items-start gap-2 p-3 bg-muted/30 rounded border">
-                              <span className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold">
+                            <div key={index} className="flex items-start gap-3">
+                              <span className="flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-full bg-red-600 text-white text-sm font-bold">
                                 {index + 1}
                               </span>
                               <div className="flex-1">
                                 {customerName && (
-                                  <p className="text-sm font-semibold text-primary mb-1">
-                                    <User className="h-3 w-3 inline mr-1" />
-                                    {customerName}
-                                  </p>
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    <User className="h-4 w-4 text-blue-600 flex-shrink-0" />
+                                    <span className="font-semibold text-blue-600 text-sm">{customerName}</span>
+                                  </div>
                                 )}
-                                <p className="font-medium text-sm">{addressWithoutName}</p>
+                                {whatsapp && (
+                                  <div className="flex items-center gap-1.5 text-sm text-gray-700 mb-1">
+                                    <span className="flex-shrink-0">📱</span>
+                                    <span>WhatsApp: {whatsapp}</span>
+                                  </div>
+                                )}
+                                {reference && (
+                                  <div className="flex items-center gap-1.5 text-sm text-gray-700 mb-1">
+                                    <span className="flex-shrink-0 text-gray-400">○</span>
+                                    <span>Ref: {reference}</span>
+                                  </div>
+                                )}
+                                <div className="text-sm text-gray-900">{addressText}</div>
                               </div>
                             </div>
                           );

@@ -3622,6 +3622,7 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
         totalTime: originalRequest.totalTime,
         estimatedTime: originalRequest.estimatedTime,
         requestEtaAmount: driverAmount,
+        needsReturn: originalRequest.needsReturn || false,
         isLater: false,
         isDriverStarted: false,
         isDriverArrived: false,
@@ -3653,7 +3654,7 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
             request_id,
             total_amount,
             admin_commision,
-          admin_commision_type,
+            admin_commision_type,
             base_price,
             base_distance,
             price_per_distance,
@@ -3661,11 +3662,12 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
             price_per_time,
             time_price
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             newRequest.id,
             bill.total_amount,
             adminCommission,
+            bill.admin_commision_type || 'percentage',
             bill.base_price,
             bill.base_distance,
             bill.price_per_distance,
@@ -3674,6 +3676,50 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
             bill.time_price
           ]
         );
+      }
+
+      // Copiar delivery_stops se houver (para entregas com múltiplas paradas)
+      const { rows: deliveryStops } = await pool.query(
+        `SELECT * FROM delivery_stops WHERE request_id = $1 ORDER BY stop_order`,
+        [id]
+      );
+
+      if (deliveryStops && deliveryStops.length > 0) {
+        console.log(`🔄 Copiando ${deliveryStops.length} paradas múltiplas para a nova entrega`);
+
+        for (const stop of deliveryStops) {
+          await pool.query(
+            `INSERT INTO delivery_stops (
+              id,
+              request_id,
+              stop_order,
+              stop_type,
+              customer_name,
+              customer_whatsapp,
+              delivery_reference,
+              address,
+              lat,
+              lng,
+              status,
+              notes,
+              created_at,
+              updated_at
+            )
+            VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, NOW(), NOW())`,
+            [
+              newRequest.id,
+              stop.stop_order,
+              stop.stop_type,
+              stop.customer_name,
+              stop.customer_whatsapp,
+              stop.delivery_reference,
+              stop.address,
+              stop.lat,
+              stop.lng,
+              stop.notes
+            ]
+          );
+        }
       }
 
       // Buscar configurações de busca e timeout
