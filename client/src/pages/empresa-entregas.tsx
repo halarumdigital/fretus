@@ -424,9 +424,25 @@ export default function EmpresaEntregas() {
 
   // Update delivery point
   const updateDeliveryPoint = (id: number, field: string, value: string) => {
-    setDeliveryPoints(prev => prev.map(p =>
-      p.id === id ? { ...p, [field]: value } : p
-    ));
+    console.log(`📝 Atualizando ponto ${id}, campo ${field} = "${value}"`);
+
+    setDeliveryPoints(prev => {
+      const updated = prev.map(p =>
+        p.id === id ? { ...p, [field]: value } : p
+      );
+
+      // Log específico para WhatsApp e Referência
+      if (field === 'customerWhatsapp' || field === 'reference') {
+        console.log(`🔍 Estado após atualizar ${field}:`, updated.map((p, i) => ({
+          ponto: i + 1,
+          id: p.id,
+          customerWhatsapp: p.customerWhatsapp || '(vazio)',
+          reference: p.reference || '(vazio)'
+        })));
+      }
+
+      return updated;
+    });
   };
 
   // Pre-fill pickup address from company data when modal opens
@@ -844,6 +860,30 @@ export default function EmpresaEntregas() {
   };
 
   const handleSubmitDelivery = async () => {
+    // VERSÃO 3.0 - FORÇAR ATUALIZAÇÃO
+    const timestamp = new Date().toISOString();
+    window.alert(`⚠️ VERSÃO 3.0 - TIMESTAMP: ${timestamp}\n\nDADOS DOS PONTOS:\n\n${deliveryPoints.map((p, i) =>
+      `📍 Ponto ${i+1}:\n` +
+      `  Nome: ${p.customerName || '❌ VAZIO'}\n` +
+      `  WhatsApp: ${p.customerWhatsapp || '❌ VAZIO'}\n` +
+      `  Referência: ${p.reference || '❌ VAZIO'}\n` +
+      `  Endereço: ${p.address || '❌ VAZIO'}`
+    ).join('\n\n')}\n\n⚠️ Se você viu este popup com timestamp, o código foi atualizado!`);
+
+    // Log no console também
+    console.error(`🔴🔴🔴 VERSÃO 3.0 DO CÓDIGO - TIMESTAMP: ${timestamp} 🔴🔴🔴`);
+    console.log('🚀 ====== SUBMIT INICIADO ======');
+    console.log('📋 Estado COMPLETO de deliveryPoints:', JSON.stringify(deliveryPoints, null, 2));
+    console.log('🔍 Verificando campos importantes:');
+    deliveryPoints.forEach((point, idx) => {
+      console.log(`   Ponto ${idx + 1}:`, {
+        customerName: point.customerName,
+        customerWhatsapp: point.customerWhatsapp,
+        reference: point.reference,
+        address: point.address
+      });
+    });
+
     // Validation
     const hasDeliveryPoint = deliveryPoints.some(point => point.address);
 
@@ -892,6 +932,17 @@ export default function EmpresaEntregas() {
     // Get all delivery points
     const validDeliveryPoints = deliveryPoints.filter(point => point.address);
 
+    // LOG CRÍTICO: Ver estado real dos campos antes de enviar
+    console.log('🚨🚨🚨 ESTADO REAL DOS DELIVERY POINTS ANTES DE ENVIAR:',
+      validDeliveryPoints.map((p, i) => ({
+        ponto: i + 1,
+        customerWhatsapp: p.customerWhatsapp || 'VAZIO',
+        reference: p.reference || 'VAZIO',
+        nome: p.customerName || 'VAZIO',
+        endereco: p.address
+      }))
+    );
+
     // Build all delivery addresses with city and state
     const deliveryAddresses = validDeliveryPoints.map(point => {
       const addressParts = [
@@ -912,6 +963,13 @@ export default function EmpresaEntregas() {
       const point = validDeliveryPoints[idx];
       let addressParts = [];
 
+      // LOG para cada ponto sendo processado
+      console.log(`🔍 Processando ponto ${idx + 1}:`, {
+        customerName: point.customerName,
+        customerWhatsapp: point.customerWhatsapp,
+        reference: point.reference
+      });
+
       // Add customer name if present
       if (point.customerName) {
         addressParts.push(`[${point.customerName}]`);
@@ -919,12 +977,18 @@ export default function EmpresaEntregas() {
 
       // Add WhatsApp if present
       if (point.customerWhatsapp) {
+        console.log(`✅ Adicionando WhatsApp: [WhatsApp: ${point.customerWhatsapp}]`);
         addressParts.push(`[WhatsApp: ${point.customerWhatsapp}]`);
+      } else {
+        console.log('❌ WhatsApp vazio, não será adicionado');
       }
 
       // Add reference if present
       if (point.reference) {
+        console.log(`✅ Adicionando Referência: [Ref: ${point.reference}]`);
         addressParts.push(`[Ref: ${point.reference}]`);
+      } else {
+        console.log('❌ Referência vazia, não será adicionada');
       }
 
       // Add the address itself
@@ -932,6 +996,19 @@ export default function EmpresaEntregas() {
 
       return addressParts.join(" ");
     }).join(" | ");
+
+    // LOG CRÍTICO: String final que será enviada
+    console.log('🚨🚨🚨 STRING FINAL QUE SERÁ ENVIADA AO BACKEND:');
+    console.log(allDeliveryAddresses);
+
+    // Log dos dados que serão enviados
+    console.log('📦 Dados dos pontos de entrega:', validDeliveryPoints.map((p, i) => ({
+      ponto: i + 1,
+      nome: p.customerName,
+      whatsapp: p.customerWhatsapp,
+      referencia: p.reference,
+      endereco: `${p.address}, ${p.number}`
+    })));
 
     // Geocode pickup address
     console.log('🔍 Geocodificando endereço de retirada:', pickupFullAddress);
@@ -963,7 +1040,7 @@ export default function EmpresaEntregas() {
 
     console.log('✅ Coordenadas de entrega:', dropoffCoords);
 
-    createDeliveryMutation.mutate({
+    const requestPayload = {
       pickupAddress: {
         address: pickupFullAddress,
         lat: pickupCoords.lat,
@@ -983,7 +1060,14 @@ export default function EmpresaEntregas() {
       customerWhatsapp: validDeliveryPoints[0]?.customerWhatsapp || null,
       deliveryReference: validDeliveryPoints[0]?.reference || null,
       needsReturn: deliveryForm.needsReturn,
-    });
+    };
+
+    console.log('\n📤 ====== PAYLOAD QUE SERÁ ENVIADO ======');
+    console.log('📦 Endereço de entrega completo:', requestPayload.dropoffAddress.address);
+    console.log('📦 Payload completo:', JSON.stringify(requestPayload, null, 2));
+    console.log('====== FIM PAYLOAD ======\n');
+
+    createDeliveryMutation.mutate(requestPayload);
   };
 
   return (

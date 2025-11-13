@@ -3211,34 +3211,48 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
       // Se o endereço de entrega contém múltiplos pontos, salvar na tabela delivery_stops
       if (dropoffAddress.address && dropoffAddress.address.includes(" | ")) {
         const addresses = dropoffAddress.address.split(" | ");
-        console.log(`📍 Detectados ${addresses.length} pontos de entrega, salvando na tabela delivery_stops`);
+        console.log(`\n🔍 ====== DEBUG MÚLTIPLOS STOPS ======`);
+        console.log(`📍 Detectados ${addresses.length} pontos de entrega`);
+        console.log(`📦 ENDEREÇO COMPLETO RECEBIDO:`, dropoffAddress.address);
+        console.log(`📦 ARRAY DE ENDEREÇOS APÓS SPLIT:`, addresses);
 
         for (let i = 0; i < addresses.length; i++) {
           const fullAddress = addresses[i];
+          console.log(`\n📍 Processando Stop ${i + 1}/${addresses.length}`);
+          console.log(`   String original completa: "${fullAddress}"`);
           let remainingAddress = fullAddress;
 
           // Extrair nome do cliente no formato [Nome]
           const customerNameMatch = remainingAddress.match(/^\[([^\]]+)\]\s*/);
           const extractedCustomerName = customerNameMatch ? customerNameMatch[1] : null;
+          console.log(`   🔍 Nome Match:`, customerNameMatch);
+          console.log(`   ✅ Nome extraído: "${extractedCustomerName}"`);
           if (extractedCustomerName) {
             remainingAddress = remainingAddress.replace(/^\[([^\]]+)\]\s*/, '');
           }
+          console.log(`   ➡️ String restante após remover nome: "${remainingAddress}"`);
 
           // Extrair WhatsApp no formato [WhatsApp: xxx]
           const whatsappMatch = remainingAddress.match(/^\[WhatsApp:\s*([^\]]+)\]\s*/);
           const extractedWhatsapp = whatsappMatch ? whatsappMatch[1] : null;
+          console.log(`   🔍 WhatsApp Match:`, whatsappMatch);
+          console.log(`   ✅ WhatsApp extraído: "${extractedWhatsapp}"`);
           if (extractedWhatsapp) {
             remainingAddress = remainingAddress.replace(/^\[WhatsApp:\s*([^\]]+)\]\s*/, '');
           }
+          console.log(`   ➡️ String restante após remover WhatsApp: "${remainingAddress}"`);
 
           // Extrair Referência no formato [Ref: xxx]
           const referenceMatch = remainingAddress.match(/^\[Ref:\s*([^\]]+)\]\s*/);
           const extractedReference = referenceMatch ? referenceMatch[1] : null;
+          console.log(`   🔍 Referência Match:`, referenceMatch);
+          console.log(`   ✅ Referência extraída: "${extractedReference}"`);
           if (extractedReference) {
             remainingAddress = remainingAddress.replace(/^\[Ref:\s*([^\]]+)\]\s*/, '');
           }
+          console.log(`   ➡️ Endereço final: "${remainingAddress}"`);
 
-          console.log(`📦 Stop ${i + 1}:`, {
+          console.log(`\n   📋 RESUMO Stop ${i + 1}:`, {
             customerName: extractedCustomerName,
             whatsapp: extractedWhatsapp,
             reference: extractedReference,
@@ -3246,6 +3260,23 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
           });
 
           // Inserir na tabela delivery_stops
+          const insertValues = [
+            request.id,
+            i + 1, // stop_order (1, 2, 3...)
+            extractedCustomerName,
+            extractedWhatsapp,
+            extractedReference,
+            remainingAddress
+          ];
+          console.log(`   💾 Valores que serão inseridos no banco:`, {
+            request_id: insertValues[0],
+            stop_order: insertValues[1],
+            customer_name: insertValues[2],
+            customer_whatsapp: insertValues[3],
+            delivery_reference: insertValues[4],
+            address: insertValues[5]
+          });
+
           await pool.query(
             `INSERT INTO delivery_stops (
               id, request_id, stop_order, stop_type,
@@ -3258,18 +3289,13 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
               NULL, NULL, 'pending',
               NOW(), NOW()
             )`,
-            [
-              request.id,
-              i + 1, // stop_order (1, 2, 3...)
-              extractedCustomerName,
-              extractedWhatsapp,
-              extractedReference,
-              remainingAddress
-            ]
+            insertValues
           );
+          console.log(`   ✅ Stop ${i + 1} inserido no banco com sucesso!`);
         }
 
-        console.log(`✅ ${addresses.length} stops salvos na tabela delivery_stops`);
+        console.log(`\n✅ ${addresses.length} stops salvos na tabela delivery_stops`);
+        console.log(`🔍 ====== FIM DEBUG ======\n`);
       }
 
       // Create request bill
@@ -6439,6 +6465,92 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
     } catch (error) {
       console.error("Erro ao rejeitar entrega:", error);
       return res.status(500).json({ message: "Erro ao rejeitar entrega" });
+    }
+  });
+
+  // GET /api/v1/driver/deliveries/:id/stops - Listar stops da entrega
+  app.get("/api/v1/driver/deliveries/:id/stops", async (req, res) => {
+    try {
+      let driverId = req.session.driverId;
+
+      // Se não tiver sessão, tenta obter do token Bearer
+      if (!driverId) {
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          try {
+            const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+            if (decoded.type === 'driver' && decoded.id) {
+              driverId = decoded.id;
+            }
+          } catch (e) {
+            console.error("Token inválido:", e);
+          }
+        }
+      }
+
+      if (!driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const deliveryId = req.params.id;
+
+      // Verificar se a entrega pertence ao motorista
+      const request = await storage.getRequest(deliveryId);
+      if (!request) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      if (request.driverId !== driverId) {
+        return res.status(403).json({ message: "Esta entrega não pertence a você" });
+      }
+
+      // Buscar stops da entrega com TODOS os campos
+      const stopsResult = await pool.query(
+        `SELECT
+          id,
+          request_id,
+          stop_order,
+          stop_type,
+          customer_name,
+          customer_whatsapp,
+          delivery_reference,
+          address,
+          lat,
+          lng,
+          status,
+          to_char(completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS completed_at,
+          to_char(created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS created_at,
+          to_char(updated_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo', 'YYYY-MM-DD"T"HH24:MI:SS"-03:00"') AS updated_at
+        FROM delivery_stops
+        WHERE request_id = $1
+        ORDER BY stop_order ASC`,
+        [deliveryId]
+      );
+
+      const stops = stopsResult.rows;
+      const completedStops = stops.filter((s: any) => s.status === 'completed');
+      const nextStop = stops.find((s: any) => s.status === 'pending' || s.status === 'arrived');
+
+      console.log(`📍 Stops da entrega ${deliveryId}:
+  - Total: ${stops.length}
+  - Completos: ${completedStops.length}
+  - Próximo: ${nextStop ? `Stop ${nextStop.stop_order}` : 'Nenhum'}`);
+
+      return res.json({
+        success: true,
+        data: {
+          hasMultipleStops: stops.length > 0,
+          totalStops: stops.length,
+          completedStops: completedStops.length,
+          remainingStops: stops.length - completedStops.length,
+          stops: stops,
+          nextStop: nextStop || null
+        }
+      });
+    } catch (error) {
+      console.error("Erro ao buscar stops:", error);
+      return res.status(500).json({ message: "Erro ao buscar stops da entrega" });
     }
   });
 

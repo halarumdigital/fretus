@@ -880,8 +880,29 @@ export default function EmpresaEntregasEmAndamento() {
     const allDeliveryAddresses = deliveryAddresses.map((addr, idx) => {
       const point = validDeliveryPoints[idx];
       const addressPart = `${point.address}, ${point.number || "S/N"} - ${point.neighborhood}`;
+      
+      // Construir a string com nome, WhatsApp e referência no formato esperado pelo backend
+      let formattedAddress = "";
+      
       // Incluir nome do cliente se fornecido
-      return point.customerName ? `[${point.customerName}] ${addressPart}` : addressPart;
+      if (point.customerName) {
+        formattedAddress += `[${point.customerName}] `;
+      }
+      
+      // Incluir WhatsApp se fornecido
+      if (point.customerWhatsapp) {
+        formattedAddress += `[WhatsApp: ${point.customerWhatsapp}] `;
+      }
+      
+      // Incluir Referência se fornecida
+      if (point.reference) {
+        formattedAddress += `[Ref: ${point.reference}] `;
+      }
+      
+      // Adicionar o endereço
+      formattedAddress += addressPart;
+      
+      return formattedAddress;
     }).join(" | ");
 
     const pickupCoords = await geocodeAddress(pickupFullAddress);

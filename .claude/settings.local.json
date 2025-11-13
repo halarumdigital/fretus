@@ -152,7 +152,10 @@
       "Bash(cmd /c \"del fix-routes.js fix-routes.mjs apply-fix.ps1 apply-fix-final.mjs fix-final-correct.mjs debug-fix.mjs fix-remaining.mjs CORRECAO_VALOR_ZERADO.md fix-request-bills-insert.md\")",
       "Bash(cmd /c \"del fix-user-icon.mjs\")",
       "Bash(cmd /c \"dir /b f:\\fretus\\*.ts f:\\fretus\\*.mjs f:\\fretus\\*.js f:\\fretus\\*.sql f:\\fretus\\*.md f:\\fretus\\*.ps1 2>nul || echo No files found\")",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(cmd /c \"taskkill //F //PID 33376\")",
+      "Bash(cmd /c \"del check-single-stop.mjs check-multi-stops.mjs check-specific-delivery.mjs check-latest.mjs\")",
+      "Bash(cmd /c \"taskkill /F /PID 26648 && taskkill /F /PID 16308 && timeout /t 3 /nobreak && npm run dev\")"
     ],
     "deny": [],
     "ask": []
