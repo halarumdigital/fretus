@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { storage } from "./storage";
-import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings, driverCompanyRatings, deliveryStops } from "@shared/schema";
+import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings, driverCompanyRatings, deliveryStops, faqs, insertFaqSchema } from "@shared/schema";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { pool, db } from "./db";
@@ -8056,6 +8056,654 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
       res.status(500).json({ message: "Erro ao buscar motoristas" });
     }
   });
+
+  // ========================
+  // FAQ ENDPOINTS
+  // ========================
+
+  // GET /api/faqs - Listar FAQs
+  app.get("/api/faqs", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    try {
+      const faqList = await db
+        .select({
+          id: faqs.id,
+          question: faqs.question,
+          answer: faqs.answer,
+          category: faqs.category,
+          target: faqs.target,
+          displayOrder: faqs.displayOrder,
+          active: faqs.active,
+          createdAt: faqs.createdAt,
+          updatedAt: faqs.updatedAt
+        })
+        .from(faqs)
+        .orderBy(faqs.category, faqs.displayOrder, faqs.createdAt);
+
+      res.json(faqList);
+    } catch (error) {
+      console.error("Erro ao buscar FAQs:", error);
+      res.status(500).json({ message: "Erro ao buscar FAQs" });
+    }
+  });
+
+  // GET /api/faqs/:id - Obter FAQ específico
+  app.get("/api/faqs/:id", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const { id } = req.params;
+
+    try {
+      const faq = await db
+        .select()
+        .from(faqs)
+        .where(eq(faqs.id, id))
+        .limit(1);
+
+      if (faq.length === 0) {
+        return res.status(404).json({ message: "FAQ não encontrado" });
+      }
+
+      res.json(faq[0]);
+    } catch (error) {
+      console.error("Erro ao buscar FAQ:", error);
+      res.status(500).json({ message: "Erro ao buscar FAQ" });
+    }
+  });
+
+  // POST /api/faqs - Criar novo FAQ
+  app.post("/api/faqs", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const validation = insertFaqSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({
+        message: "Dados inválidos",
+        errors: validation.error.issues
+      });
+    }
+
+    try {
+      const newFaq = await db
+        .insert(faqs)
+        .values({
+          ...validation.data,
+          createdBy: req.session.userId,
+          updatedBy: req.session.userId
+        })
+        .returning();
+
+      res.status(201).json({
+        message: "FAQ criado com sucesso",
+        faq: newFaq[0]
+      });
+    } catch (error) {
+      console.error("Erro ao criar FAQ:", error);
+      res.status(500).json({ message: "Erro ao criar FAQ" });
+    }
+  });
+
+  // PUT /api/faqs/:id - Atualizar FAQ
+  app.put("/api/faqs/:id", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const { id } = req.params;
+    const validation = insertFaqSchema.safeParse(req.body);
+
+    if (!validation.success) {
+      return res.status(400).json({
+        message: "Dados inválidos",
+        errors: validation.error.issues
+      });
+    }
+
+    try {
+      const updatedFaq = await db
+        .update(faqs)
+        .set({
+          ...validation.data,
+          updatedBy: req.session.userId,
+          updatedAt: new Date()
+        })
+        .where(eq(faqs.id, id))
+        .returning();
+
+      if (updatedFaq.length === 0) {
+        return res.status(404).json({ message: "FAQ não encontrado" });
+      }
+
+      res.json({
+        message: "FAQ atualizado com sucesso",
+        faq: updatedFaq[0]
+      });
+    } catch (error) {
+      console.error("Erro ao atualizar FAQ:", error);
+      res.status(500).json({ message: "Erro ao atualizar FAQ" });
+    }
+  });
+
+  // DELETE /api/faqs/:id - Deletar FAQ
+  app.delete("/api/faqs/:id", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const { id } = req.params;
+
+    try {
+      const deletedFaq = await db
+        .delete(faqs)
+        .where(eq(faqs.id, id))
+        .returning();
+
+      if (deletedFaq.length === 0) {
+        return res.status(404).json({ message: "FAQ não encontrado" });
+      }
+
+      res.json({ message: "FAQ deletado com sucesso" });
+    } catch (error) {
+      console.error("Erro ao deletar FAQ:", error);
+      res.status(500).json({ message: "Erro ao deletar FAQ" });
+    }
+  });
+
+  // ========================
+  // FAQ PUBLIC ENDPOINTS (Para Apps)
+  // ========================
+
+  // GET /api/v1/driver/faqs - FAQs para motoristas
+  app.get("/api/v1/driver/faqs", async (req, res) => {
+    try {
+      const faqList = await db
+        .select({
+          id: faqs.id,
+          question: faqs.question,
+          answer: faqs.answer,
+          category: faqs.category,
+          displayOrder: faqs.displayOrder
+        })
+        .from(faqs)
+        .where(
+          and(
+            eq(faqs.target, "driver"),
+            eq(faqs.active, true)
+          )
+        )
+        .orderBy(faqs.category, faqs.displayOrder, faqs.createdAt);
+
+      // Agrupar por categoria para melhor apresentação
+      const groupedFaqs = faqList.reduce((acc, faq) => {
+        if (!acc[faq.category]) {
+          acc[faq.category] = {
+            category: faq.category,
+            items: []
+          };
+        }
+        acc[faq.category].items.push({
+          id: faq.id,
+          question: faq.question,
+          answer: faq.answer,
+          displayOrder: faq.displayOrder
+        });
+        return acc;
+      }, {} as Record<string, any>);
+
+      // Converter para array
+      const result = Object.values(groupedFaqs);
+
+      res.json({
+        success: true,
+        faqs: result,
+        total: faqList.length
+      });
+    } catch (error) {
+      console.error("Erro ao buscar FAQs de motoristas:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao buscar FAQs"
+      });
+    }
+  });
+
+  // GET /api/v1/company/faqs - FAQs para empresas
+  app.get("/api/v1/company/faqs", async (req, res) => {
+    try {
+      const faqList = await db
+        .select({
+          id: faqs.id,
+          question: faqs.question,
+          answer: faqs.answer,
+          category: faqs.category,
+          displayOrder: faqs.displayOrder
+        })
+        .from(faqs)
+        .where(
+          and(
+            eq(faqs.target, "company"),
+            eq(faqs.active, true)
+          )
+        )
+        .orderBy(faqs.category, faqs.displayOrder, faqs.createdAt);
+
+      // Agrupar por categoria para melhor apresentação
+      const groupedFaqs = faqList.reduce((acc, faq) => {
+        if (!acc[faq.category]) {
+          acc[faq.category] = {
+            category: faq.category,
+            items: []
+          };
+        }
+        acc[faq.category].items.push({
+          id: faq.id,
+          question: faq.question,
+          answer: faq.answer,
+          displayOrder: faq.displayOrder
+        });
+        return acc;
+      }, {} as Record<string, any>);
+
+      // Converter para array
+      const result = Object.values(groupedFaqs);
+
+      res.json({
+        success: true,
+        faqs: result,
+        total: faqList.length
+      });
+    } catch (error) {
+      console.error("Erro ao buscar FAQs de empresas:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao buscar FAQs"
+      });
+    }
+  });
+
+  // GET /api/public/faqs/:target - Endpoint genérico para FAQs
+  app.get("/api/public/faqs/:target", async (req, res) => {
+    const { target } = req.params;
+
+    // Validar target
+    if (target !== "driver" && target !== "company") {
+      return res.status(400).json({
+        success: false,
+        message: "Tipo de FAQ inválido. Use 'driver' ou 'company'"
+      });
+    }
+
+    try {
+      const faqList = await db
+        .select({
+          id: faqs.id,
+          question: faqs.question,
+          answer: faqs.answer,
+          category: faqs.category,
+          displayOrder: faqs.displayOrder
+        })
+        .from(faqs)
+        .where(
+          and(
+            eq(faqs.target, target),
+            eq(faqs.active, true)
+          )
+        )
+        .orderBy(faqs.category, faqs.displayOrder, faqs.createdAt);
+
+      // Agrupar por categoria para melhor apresentação
+      const groupedFaqs = faqList.reduce((acc, faq) => {
+        if (!acc[faq.category]) {
+          acc[faq.category] = {
+            category: faq.category,
+            items: []
+          };
+        }
+        acc[faq.category].items.push({
+          id: faq.id,
+          question: faq.question,
+          answer: faq.answer,
+          displayOrder: faq.displayOrder
+        });
+        return acc;
+      }, {} as Record<string, any>);
+
+      // Converter para array e ordenar por nome da categoria
+      const result = Object.values(groupedFaqs).sort((a: any, b: any) =>
+        a.category.localeCompare(b.category)
+      );
+
+      res.json({
+        success: true,
+        target: target,
+        faqs: result,
+        total: faqList.length
+      });
+    } catch (error) {
+      console.error(`Erro ao buscar FAQs de ${target}:`, error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao buscar FAQs"
+      });
+    }
+  });
+
+  // GET /api/public/faqs - Listar todas as FAQs públicas (sem filtro)
+  app.get("/api/public/faqs", async (req, res) => {
+    try {
+      const faqList = await db
+        .select({
+          id: faqs.id,
+          question: faqs.question,
+          answer: faqs.answer,
+          category: faqs.category,
+          target: faqs.target,
+          displayOrder: faqs.displayOrder
+        })
+        .from(faqs)
+        .where(eq(faqs.active, true))
+        .orderBy(faqs.target, faqs.category, faqs.displayOrder, faqs.createdAt);
+
+      // Agrupar primeiro por target, depois por categoria
+      const groupedByTarget = {
+        driver: [] as any[],
+        company: [] as any[]
+      };
+
+      faqList.forEach(faq => {
+        const targetGroup = groupedByTarget[faq.target as keyof typeof groupedByTarget];
+        let categoryGroup = targetGroup.find((g: any) => g.category === faq.category);
+
+        if (!categoryGroup) {
+          categoryGroup = {
+            category: faq.category,
+            items: []
+          };
+          targetGroup.push(categoryGroup);
+        }
+
+        categoryGroup.items.push({
+          id: faq.id,
+          question: faq.question,
+          answer: faq.answer,
+          displayOrder: faq.displayOrder
+        });
+      });
+
+      res.json({
+        success: true,
+        faqs: {
+          driver: groupedByTarget.driver,
+          company: groupedByTarget.company
+        },
+        totals: {
+          driver: groupedByTarget.driver.reduce((sum: number, cat: any) => sum + cat.items.length, 0),
+          company: groupedByTarget.company.reduce((sum: number, cat: any) => sum + cat.items.length, 0)
+        }
+      });
+    } catch (error) {
+      console.error("Erro ao buscar todas as FAQs:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao buscar FAQs"
+      });
+    }
+  });
+
+  // ========================
+  // Driver App Endpoints
+  // ========================
+
+  // GET /api/driver/:driverId/deliveries - Buscar entregas do motorista com filtros
+  app.get("/api/driver/:driverId/deliveries", async (req, res) => {
+    try {
+      const { driverId } = req.params;
+      const {
+        startDate,
+        endDate,
+        companyId,
+        groupBy = "day" // day | week | month
+      } = req.query;
+
+      // Validar groupBy
+      if (!["day", "week", "month"].includes(groupBy as string)) {
+        return res.status(400).json({
+          success: false,
+          message: "Parâmetro groupBy inválido. Use: day, week ou month"
+        });
+      }
+
+      // Montar query base
+      let query = db
+        .select({
+          // Dados da entrega
+          id: requests.id,
+          requestNumber: requests.requestNumber,
+          createdAt: requests.createdAt,
+          completedAt: requests.completedAt,
+          cancelledAt: requests.cancelledAt,
+          isCompleted: requests.isCompleted,
+          isCancelled: requests.isCancelled,
+          cancelReason: requests.cancelReason,
+
+          // Distância e tempo
+          totalDistance: requests.totalDistance,
+          totalTime: requests.totalTime,
+          estimatedTime: requests.estimatedTime,
+
+          // Empresa
+          companyId: requests.companyId,
+          companyName: companies.name,
+          companyPhone: companies.phone,
+
+          // Valores (do requestBills)
+          driverEarnings: sql<number>`
+            CASE
+              WHEN ${requestBills.totalAmount} IS NOT NULL THEN
+                ROUND(
+                  ${requestBills.totalAmount}::numeric *
+                  (1 - COALESCE(${requestBills.adminCommision}::numeric, 0) / 100),
+                  2
+                )
+              ELSE 0
+            END
+          `.as('driver_earnings'),
+          totalAmount: requestBills.totalAmount,
+          adminCommission: requestBills.adminCommision,
+
+          // Endereços
+          pickAddress: requestPlaces.pickAddress,
+          dropAddress: requestPlaces.dropAddress,
+
+          // Cliente
+          customerName: requests.customerName,
+          customerWhatsapp: requests.customerWhatsapp,
+        })
+        .from(requests)
+        .leftJoin(companies, eq(requests.companyId, companies.id))
+        .leftJoin(requestBills, eq(requests.id, requestBills.requestId))
+        .leftJoin(requestPlaces, eq(requests.id, requestPlaces.requestId))
+        .where(
+          and(
+            eq(requests.driverId, driverId),
+            sql`(${requests.isCompleted} = true OR ${requests.isCancelled} = true)`
+          )
+        );
+
+      // Aplicar filtros de data
+      const filters: any[] = [
+        eq(requests.driverId, driverId),
+        sql`(${requests.isCompleted} = true OR ${requests.isCancelled} = true)`
+      ];
+
+      if (startDate) {
+        filters.push(sql`DATE(${requests.createdAt}) >= ${startDate}`);
+      }
+
+      if (endDate) {
+        filters.push(sql`DATE(${requests.createdAt}) <= ${endDate}`);
+      }
+
+      // Filtro por empresa
+      if (companyId) {
+        filters.push(eq(requests.companyId, companyId as string));
+      }
+
+      query = query.where(and(...filters));
+
+      // Executar query
+      const deliveries = await query;
+
+      // Calcular estatísticas
+      const stats = {
+        totalDeliveries: 0,
+        completedDeliveries: 0,
+        cancelledDeliveries: 0,
+        totalEarnings: 0,
+        totalDistance: 0,
+        totalTime: 0,
+        averageDistance: 0,
+        averageTime: 0,
+        averageEarnings: 0,
+      };
+
+      // Agrupar por período
+      const groupedDeliveries: Record<string, any> = {};
+
+      deliveries.forEach((delivery) => {
+        // Atualizar estatísticas gerais
+        stats.totalDeliveries++;
+
+        if (delivery.isCompleted) {
+          stats.completedDeliveries++;
+          stats.totalEarnings += Number(delivery.driverEarnings) || 0;
+          stats.totalDistance += Number(delivery.totalDistance) || 0;
+          stats.totalTime += Number(delivery.totalTime) || 0;
+        } else if (delivery.isCancelled) {
+          stats.cancelledDeliveries++;
+        }
+
+        // Determinar a chave de agrupamento
+        const date = new Date(delivery.createdAt);
+        let groupKey: string;
+
+        if (groupBy === "day") {
+          groupKey = date.toISOString().split('T')[0]; // YYYY-MM-DD
+        } else if (groupBy === "week") {
+          // Obter o número da semana
+          const weekNumber = getWeekNumber(date);
+          const year = date.getFullYear();
+          groupKey = `${year}-W${weekNumber.toString().padStart(2, '0')}`;
+        } else { // month
+          groupKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+        }
+
+        // Inicializar grupo se não existir
+        if (!groupedDeliveries[groupKey]) {
+          groupedDeliveries[groupKey] = {
+            period: groupKey,
+            deliveries: [],
+            stats: {
+              total: 0,
+              completed: 0,
+              cancelled: 0,
+              earnings: 0,
+              distance: 0,
+              time: 0,
+            }
+          };
+        }
+
+        // Adicionar entrega ao grupo
+        groupedDeliveries[groupKey].deliveries.push({
+          id: delivery.id,
+          requestNumber: delivery.requestNumber,
+          createdAt: delivery.createdAt,
+          completedAt: delivery.completedAt,
+          cancelledAt: delivery.cancelledAt,
+          status: delivery.isCompleted ? "completed" : "cancelled",
+          cancelReason: delivery.cancelReason,
+          earnings: Number(delivery.driverEarnings) || 0,
+          distance: Number(delivery.totalDistance) || 0,
+          time: Number(delivery.totalTime) || 0,
+          estimatedTime: Number(delivery.estimatedTime) || 0,
+          company: {
+            id: delivery.companyId,
+            name: delivery.companyName,
+            phone: delivery.companyPhone,
+          },
+          customer: {
+            name: delivery.customerName,
+            whatsapp: delivery.customerWhatsapp,
+          },
+          addresses: {
+            pickup: delivery.pickAddress,
+            dropoff: delivery.dropAddress,
+          }
+        });
+
+        // Atualizar estatísticas do grupo
+        groupedDeliveries[groupKey].stats.total++;
+        if (delivery.isCompleted) {
+          groupedDeliveries[groupKey].stats.completed++;
+          groupedDeliveries[groupKey].stats.earnings += Number(delivery.driverEarnings) || 0;
+          groupedDeliveries[groupKey].stats.distance += Number(delivery.totalDistance) || 0;
+          groupedDeliveries[groupKey].stats.time += Number(delivery.totalTime) || 0;
+        } else if (delivery.isCancelled) {
+          groupedDeliveries[groupKey].stats.cancelled++;
+        }
+      });
+
+      // Calcular médias
+      if (stats.completedDeliveries > 0) {
+        stats.averageDistance = Math.round((stats.totalDistance / stats.completedDeliveries) * 100) / 100;
+        stats.averageTime = Math.round((stats.totalTime / stats.completedDeliveries) * 100) / 100;
+        stats.averageEarnings = Math.round((stats.totalEarnings / stats.completedDeliveries) * 100) / 100;
+      }
+
+      // Converter objeto agrupado em array e ordenar
+      const groupedArray = Object.values(groupedDeliveries).sort((a: any, b: any) =>
+        b.period.localeCompare(a.period)
+      );
+
+      res.json({
+        success: true,
+        driverId,
+        filters: {
+          startDate,
+          endDate,
+          companyId,
+          groupBy,
+        },
+        stats,
+        grouped: groupedArray,
+        total: deliveries.length,
+      });
+
+    } catch (error) {
+      console.error("Erro ao buscar entregas do motorista:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao buscar entregas do motorista"
+      });
+    }
+  });
+
+  // Função auxiliar para obter o número da semana
+  function getWeekNumber(date: Date): number {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  }
 
   // ========================
   // Sentry Test Endpoints (Development Only)

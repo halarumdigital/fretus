@@ -1,4 +1,4 @@
-import { Home, Users, MapPin, Car, DollarSign, UserCog, Settings, LogOut, ChevronDown, FolderTree, FileText, CarFront, Building2, Map, Package, XCircle, Truck, CheckCircle2, Gift, Bell } from "lucide-react";
+import { Home, Users, MapPin, Car, DollarSign, UserCog, Settings, LogOut, ChevronDown, FolderTree, FileText, CarFront, Building2, Map, Package, XCircle, Truck, CheckCircle2, Gift, Bell, HelpCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -81,6 +81,11 @@ const menuItems = [
         title: "Tipos de cancelamento empresa",
         url: "/tipos-cancelamento-empresa",
         icon: XCircle,
+      },
+      {
+        title: "FAQ",
+        url: "/faq",
+        icon: HelpCircle,
       },
     ],
   },

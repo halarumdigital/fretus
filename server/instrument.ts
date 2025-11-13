@@ -20,8 +20,7 @@ Sentry.init({
 
   // Integrations
   integrations: [
-    // Automatically instrument Node.js libraries and frameworks
-    ...Sentry.autoDiscoverNodePerformanceMonitoringIntegrations(),
+    // Using default integrations
   ],
 
   // Before sending error to Sentry

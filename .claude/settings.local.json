@@ -161,7 +161,18 @@
       "Bash(cmd /c \"taskkill /F /PID 29872 && timeout /t 3 /nobreak && npm run dev\")",
       "Bash(cmd /c \"del apply-db-push.mjs test-device-endpoint.mjs get-driver-id.mjs apply-device-id-migration.mjs add-device-id-column.sql verify-device-id.mjs\")",
       "Bash(cmd /c \"del create-push-notifications-table.ts apply-push-notifications.sql\")",
-      "Bash(cmd /c \"taskkill /F /PID 36996 && timeout /t 3 /nobreak && npm run dev\")"
+      "Bash(cmd /c \"taskkill /F /PID 36996 && timeout /t 3 /nobreak && npm run dev\")",
+      "Bash(cmd /c \"find /c /v \"\" f:\\fretus\\server\\routes.ts\")",
+      "Bash(cmd /c \"echo | npm run db:push\")",
+      "Bash(npx drizzle-kit push:*)",
+      "Bash(cmd /c \"del create-faqs-table.mjs create-faqs-table.sql\")",
+      "Bash(cmd /c \"taskkill /F /PID 58828 && timeout /t 3 /nobreak && npm run dev\")",
+      "Bash(cmd /c \"powershell -Command \"\"Stop-Process -Id 58828 -Force\"\" && timeout /t 3 /nobreak && npm run dev\")",
+      "Bash(cmd /c \"del create-faqs-table.mjs 2>nul\")",
+      "Bash(cmd /c \"powershell -Command \"\"Stop-Process -Id 67112 -Force\"\"\")",
+      "Bash(cmd /c \"del test-driver-deliveries.mjs test-driver-deliveries-api.mjs\")",
+      "Bash(cmd /c \"taskkill //F //PID 67112\")",
+      "Bash(cmd /c \"powershell -Command \"\"Stop-Process -Id 67112 -Force; Start-Sleep -Seconds 3\" \")"
     ],
     "deny": [],
     "ask": []

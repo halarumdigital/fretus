@@ -953,3 +953,54 @@ export const insertPushNotificationSchema = createInsertSchema(pushNotifications
 
 export type PushNotification = typeof pushNotifications.$inferSelect;
 export type InsertPushNotification = z.infer<typeof insertPushNotificationSchema>;
+
+// ========================================
+// FAQ (Perguntas Frequentes)
+// ========================================
+export const faqs = pgTable("faqs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Conteúdo
+  question: text("question").notNull(),
+  answer: text("answer").notNull(),
+
+  // Categoria
+  category: varchar("category", { length: 100 }).notNull(),
+
+  // Target - Para quem é direcionado
+  target: varchar("target", { length: 20 }).notNull(), // 'driver' (entregador) ou 'company' (empresa)
+
+  // Ordem de exibição
+  displayOrder: integer("display_order").default(0),
+
+  // Status
+  active: boolean("active").notNull().default(true),
+
+  // Rastreamento
+  createdBy: varchar("created_by").references(() => users.id),
+  updatedBy: varchar("updated_by").references(() => users.id),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertFaqSchema = createInsertSchema(faqs, {
+  question: z.string().min(1, "Pergunta é obrigatória"),
+  answer: z.string().min(1, "Resposta é obrigatória"),
+  category: z.string().min(1, "Categoria é obrigatória"),
+  target: z.enum(["driver", "company"], {
+    required_error: "Selecione o público alvo",
+    invalid_type_error: "Público alvo inválido"
+  }),
+  displayOrder: z.number().int().optional(),
+  active: z.boolean().default(true),
+}).omit({
+  id: true,
+  createdBy: true,
+  updatedBy: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type Faq = typeof faqs.$inferSelect;
+export type InsertFaq = z.infer<typeof insertFaqSchema>;
