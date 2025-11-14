@@ -1125,3 +1125,129 @@ export const insertDriverReferralSchema = createInsertSchema(driverReferrals, {
 
 export type DriverReferral = typeof driverReferrals.$inferSelect;
 export type InsertDriverReferral = z.infer<typeof insertDriverReferralSchema>;
+
+// ========================================
+// TICKET SUBJECTS (Assuntos de Tickets)
+// ========================================
+export const ticketSubjects = pgTable("ticket_subjects", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: text("description"),
+  color: varchar("color", { length: 7 }).notNull().default("#3b82f6"),
+  active: boolean("active").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertTicketSubjectSchema = createInsertSchema(ticketSubjects, {
+  name: z.string().min(1, "Nome do assunto é obrigatório"),
+  description: z.string().optional(),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, "Cor deve estar no formato hexadecimal (#RRGGBB)").default("#3b82f6"),
+  active: z.boolean().default(true),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type TicketSubject = typeof ticketSubjects.$inferSelect;
+export type InsertTicketSubject = z.infer<typeof insertTicketSubjectSchema>;
+
+// ========================================
+// SUPPORT TICKETS (Tickets de Suporte)
+// ========================================
+export const supportTickets = pgTable("support_tickets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ticketNumber: varchar("ticket_number", { length: 50 }).unique().notNull(), // Número único do ticket (ex: TKT-001)
+
+  // Entregador
+  driverId: varchar("driver_id").notNull().references(() => drivers.id, { onDelete: "cascade" }),
+  driverName: varchar("driver_name", { length: 255 }).notNull(),
+  driverEmail: varchar("driver_email", { length: 255 }),
+  driverWhatsapp: varchar("driver_whatsapp", { length: 20 }).notNull(),
+
+  // Ticket
+  subjectId: varchar("subject_id").notNull().references(() => ticketSubjects.id),
+  message: text("message").notNull(),
+  attachmentUrl: text("attachment_url"), // URL da imagem anexada
+
+  // Status: open (aberto), in_progress (em andamento), resolved (resolvido), closed (fechado)
+  status: varchar("status", { length: 20 }).notNull().default("open"),
+
+  // Contadores
+  repliesCount: integer("replies_count").notNull().default(0),
+  unreadByDriver: boolean("unread_by_driver").notNull().default(false), // Tem mensagens não lidas pelo entregador
+
+  // Timestamps
+  lastReplyAt: timestamp("last_reply_at"),
+  resolvedAt: timestamp("resolved_at"),
+  closedAt: timestamp("closed_at"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertSupportTicketSchema = createInsertSchema(supportTickets, {
+  driverId: z.string().min(1, "ID do entregador é obrigatório"),
+  driverName: z.string().min(1, "Nome do entregador é obrigatório"),
+  driverEmail: z.string().email("Email inválido").nullable().optional(),
+  driverWhatsapp: z.string().min(1, "WhatsApp é obrigatório"),
+  subjectId: z.string().min(1, "Assunto é obrigatório"),
+  message: z.string().min(1, "Mensagem é obrigatória"),
+  attachmentUrl: z.string().nullable().optional(),
+  status: z.enum(["open", "in_progress", "resolved", "closed"]).default("open"),
+}).omit({
+  id: true,
+  ticketNumber: true,
+  repliesCount: true,
+  unreadByDriver: true,
+  lastReplyAt: true,
+  resolvedAt: true,
+  closedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type SupportTicket = typeof supportTickets.$inferSelect;
+export type InsertSupportTicket = z.infer<typeof insertSupportTicketSchema>;
+
+// ========================================
+// TICKET REPLIES (Respostas de Tickets)
+// ========================================
+export const ticketReplies = pgTable("ticket_replies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  ticketId: varchar("ticket_id").notNull().references(() => supportTickets.id, { onDelete: "cascade" }),
+
+  // Autor da resposta
+  authorType: varchar("author_type", { length: 20 }).notNull(), // 'driver' ou 'admin'
+  authorId: varchar("author_id").notNull(), // ID do driver ou user (admin)
+  authorName: varchar("author_name", { length: 255 }).notNull(),
+
+  // Conteúdo
+  message: text("message").notNull(),
+  attachmentUrl: text("attachment_url"), // URL da imagem anexada
+
+  // Leitura
+  readByDriver: boolean("read_by_driver").notNull().default(false),
+  readByAdmin: boolean("read_by_admin").notNull().default(false),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertTicketReplySchema = createInsertSchema(ticketReplies, {
+  ticketId: z.string().min(1, "ID do ticket é obrigatório"),
+  authorType: z.enum(["driver", "admin"]),
+  authorId: z.string().min(1, "ID do autor é obrigatório"),
+  authorName: z.string().min(1, "Nome do autor é obrigatório"),
+  message: z.string().min(1, "Mensagem é obrigatória"),
+  attachmentUrl: z.string().nullable().optional(),
+}).omit({
+  id: true,
+  readByDriver: true,
+  readByAdmin: true,
+  createdAt: true,
+});
+
+export type TicketReply = typeof ticketReplies.$inferSelect;
+export type InsertTicketReply = z.infer<typeof insertTicketReplySchema>;

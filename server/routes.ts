@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { storage } from "./storage";
-import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings, driverCompanyRatings, deliveryStops, faqs, insertFaqSchema, pushNotifications, referralSettings, driverReferrals } from "@shared/schema";
+import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings, driverCompanyRatings, deliveryStops, faqs, insertFaqSchema, pushNotifications, referralSettings, driverReferrals, ticketSubjects, insertTicketSubjectSchema, supportTickets, insertSupportTicketSchema, ticketReplies, insertTicketReplySchema } from "@shared/schema";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { pool, db } from "./db";
@@ -27,6 +27,19 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+// Função para construir URL completa para imagens
+function getFullImageUrl(req: express.Request, relativePath: string | null): string | null {
+  if (!relativePath) return null;
+  // Se já for uma URL completa, retorna como está
+  if (relativePath.startsWith('http')) return relativePath;
+
+  // Usa a variável de ambiente SERVER_URL se estiver definida, senão usa o host do request
+  const baseUrl = process.env.SERVER_URL || `${req.protocol}://${req.get('host')}`;
+  const fullUrl = `${baseUrl}${relativePath}`;
+  console.log(`🖼️  [IMAGE URL] ${relativePath} -> ${fullUrl}`);
+  return fullUrl;
 }
 
 // Configuração do multer para upload de arquivos
@@ -98,6 +111,40 @@ const uploadDocument = multer({
       console.log("    Extensão válida:", extname);
       console.log("    MIME type válido:", mimetype);
       cb(new Error("Apenas imagens (jpeg, jpg, png) e PDF são permitidos"));
+    }
+  },
+});
+
+// Upload para tickets - aceita imagens opcionais
+const uploadTicket = multer({
+  storage: storageMulter,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    console.log("🔍 [MULTER FILTER] Verificando arquivo:");
+    console.log("  - fieldname:", file.fieldname);
+    console.log("  - originalname:", file.originalname);
+    console.log("  - mimetype:", file.mimetype);
+    console.log("  - size:", file.size);
+
+    const allowedTypes = /jpeg|jpg|png|gif|svg/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    // Aceitar application/octet-stream se a extensão for válida (mobile apps podem enviar com esse mimetype)
+    const isOctetStreamWithValidExt = file.mimetype === 'application/octet-stream' && extname;
+
+    console.log("  - extname válido:", extname);
+    console.log("  - mimetype válido:", mimetype);
+    console.log("  - octet-stream com ext válida:", isOctetStreamWithValidExt);
+
+    // Aceita se: (mimetype E extensão válidos) OU (octet-stream com extensão válida)
+    if ((mimetype && extname) || isOctetStreamWithValidExt) {
+      console.log("✅ Arquivo aceito pelo filtro");
+      return cb(null, true);
+    } else {
+      console.log("❌ Arquivo rejeitado pelo filtro - tipo não permitido");
+      // Ignora o arquivo se não for válido (em vez de dar erro)
+      return cb(null, false);
     }
   },
 });
@@ -9564,6 +9611,784 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
       res.status(500).json({
         success: false,
         message: "Erro ao buscar FAQs"
+      });
+    }
+  });
+
+  // ========================
+  // SUPPORT TICKETS - ADMIN ENDPOINTS
+  // ========================
+
+  // GET /api/ticket-subjects - Listar assuntos de tickets
+  app.get("/api/ticket-subjects", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    try {
+      const subjects = await db
+        .select()
+        .from(ticketSubjects)
+        .orderBy(desc(ticketSubjects.createdAt));
+
+      res.json(subjects);
+    } catch (error) {
+      console.error("Erro ao listar assuntos de tickets:", error);
+      res.status(500).json({ message: "Erro ao listar assuntos de tickets" });
+    }
+  });
+
+  // POST /api/ticket-subjects - Criar assunto de ticket
+  app.post("/api/ticket-subjects", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const validation = insertTicketSubjectSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({
+        message: "Dados inválidos",
+        errors: validation.error.errors,
+      });
+    }
+
+    try {
+      const newSubject = await db
+        .insert(ticketSubjects)
+        .values(validation.data)
+        .returning();
+
+      res.status(201).json(newSubject[0]);
+    } catch (error) {
+      console.error("Erro ao criar assunto de ticket:", error);
+      res.status(500).json({ message: "Erro ao criar assunto de ticket" });
+    }
+  });
+
+  // PUT /api/ticket-subjects/:id - Atualizar assunto de ticket
+  app.put("/api/ticket-subjects/:id", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const { id } = req.params;
+    const validation = insertTicketSubjectSchema.safeParse(req.body);
+    if (!validation.success) {
+      return res.status(400).json({
+        message: "Dados inválidos",
+        errors: validation.error.errors,
+      });
+    }
+
+    try {
+      const updatedSubject = await db
+        .update(ticketSubjects)
+        .set({ ...validation.data, updatedAt: new Date() })
+        .where(eq(ticketSubjects.id, id))
+        .returning();
+
+      if (updatedSubject.length === 0) {
+        return res.status(404).json({ message: "Assunto não encontrado" });
+      }
+
+      res.json(updatedSubject[0]);
+    } catch (error) {
+      console.error("Erro ao atualizar assunto de ticket:", error);
+      res.status(500).json({ message: "Erro ao atualizar assunto de ticket" });
+    }
+  });
+
+  // DELETE /api/ticket-subjects/:id - Deletar assunto de ticket
+  app.delete("/api/ticket-subjects/:id", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const { id } = req.params;
+
+    try {
+      const deletedSubject = await db
+        .delete(ticketSubjects)
+        .where(eq(ticketSubjects.id, id))
+        .returning();
+
+      if (deletedSubject.length === 0) {
+        return res.status(404).json({ message: "Assunto não encontrado" });
+      }
+
+      res.json({ message: "Assunto deletado com sucesso" });
+    } catch (error) {
+      console.error("Erro ao deletar assunto de ticket:", error);
+      res.status(500).json({ message: "Erro ao deletar assunto de ticket" });
+    }
+  });
+
+  // GET /api/support-tickets - Listar tickets de suporte (Admin)
+  app.get("/api/support-tickets", async (req, res) => {
+    console.log("📋 Listagem de tickets - Admin");
+    console.log("  Session:", req.session);
+
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const { status, driverId, subjectId } = req.query;
+    console.log("  Filtros:", { status, driverId, subjectId });
+
+    try {
+      let query = db
+        .select({
+          ticket: supportTickets,
+          subject: ticketSubjects,
+        })
+        .from(supportTickets)
+        .leftJoin(ticketSubjects, eq(supportTickets.subjectId, ticketSubjects.id));
+
+      // Aplicar filtros
+      const conditions = [];
+      if (status) {
+        conditions.push(eq(supportTickets.status, status as string));
+      }
+      if (driverId) {
+        conditions.push(eq(supportTickets.driverId, driverId as string));
+      }
+      if (subjectId) {
+        conditions.push(eq(supportTickets.subjectId, subjectId as string));
+      }
+
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions)) as any;
+      }
+
+      const tickets = await query.orderBy(desc(supportTickets.createdAt));
+
+      res.json(tickets);
+    } catch (error) {
+      console.error("Erro ao listar tickets:", error);
+      res.status(500).json({ message: "Erro ao listar tickets" });
+    }
+  });
+
+  // GET /api/support-tickets/:id - Ver ticket específico com respostas
+  app.get("/api/support-tickets/:id", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const { id } = req.params;
+
+    try {
+      const ticket = await db
+        .select({
+          ticket: supportTickets,
+          subject: ticketSubjects,
+        })
+        .from(supportTickets)
+        .leftJoin(ticketSubjects, eq(supportTickets.subjectId, ticketSubjects.id))
+        .where(eq(supportTickets.id, id));
+
+      if (ticket.length === 0) {
+        return res.status(404).json({ message: "Ticket não encontrado" });
+      }
+
+      // Buscar respostas
+      const replies = await db
+        .select()
+        .from(ticketReplies)
+        .where(eq(ticketReplies.ticketId, id))
+        .orderBy(ticketReplies.createdAt);
+
+      // Marcar respostas como lidas pelo admin
+      await db
+        .update(ticketReplies)
+        .set({ readByAdmin: true })
+        .where(
+          and(
+            eq(ticketReplies.ticketId, id),
+            eq(ticketReplies.authorType, "driver")
+          )
+        );
+
+      res.json({
+        ...ticket[0],
+        replies,
+      });
+    } catch (error) {
+      console.error("Erro ao buscar ticket:", error);
+      res.status(500).json({ message: "Erro ao buscar ticket" });
+    }
+  });
+
+  // PUT /api/support-tickets/:id/status - Atualizar status do ticket
+  app.put("/api/support-tickets/:id/status", async (req, res) => {
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!["open", "in_progress", "resolved", "closed"].includes(status)) {
+      return res.status(400).json({ message: "Status inválido" });
+    }
+
+    try {
+      const updateData: any = { status, updatedAt: new Date() };
+      if (status === "resolved") {
+        updateData.resolvedAt = new Date();
+      } else if (status === "closed") {
+        updateData.closedAt = new Date();
+      }
+
+      const updatedTicket = await db
+        .update(supportTickets)
+        .set(updateData)
+        .where(eq(supportTickets.id, id))
+        .returning();
+
+      if (updatedTicket.length === 0) {
+        return res.status(404).json({ message: "Ticket não encontrado" });
+      }
+
+      res.json(updatedTicket[0]);
+    } catch (error) {
+      console.error("Erro ao atualizar status do ticket:", error);
+      res.status(500).json({ message: "Erro ao atualizar status do ticket" });
+    }
+  });
+
+  // POST /api/support-tickets/:id/reply - Responder ticket (Admin)
+  app.post("/api/support-tickets/:id/reply", upload.single("attachment"), async (req, res) => {
+    console.log("🎫 [ADMIN REPLY] Recebendo resposta de ticket:");
+    console.log("  - Body:", req.body);
+    console.log("  - File:", req.file ? {
+      filename: req.file.filename,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size
+    } : "Nenhum arquivo");
+
+    if (!req.session.userId || !req.session.isAdmin) {
+      return res.status(401).json({ message: "Não autorizado" });
+    }
+
+    const { id } = req.params;
+    const { message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ message: "Mensagem é obrigatória" });
+    }
+
+    try {
+      // Verificar se o ticket existe
+      const ticket = await db
+        .select()
+        .from(supportTickets)
+        .where(eq(supportTickets.id, id));
+
+      if (ticket.length === 0) {
+        return res.status(404).json({ message: "Ticket não encontrado" });
+      }
+
+      // Preparar URL do anexo
+      let attachmentUrl = null;
+      if (req.file) {
+        attachmentUrl = `/uploads/${req.file.filename}`;
+        console.log("✅ Arquivo salvo:", attachmentUrl);
+      } else {
+        console.log("ℹ️  Nenhum arquivo enviado");
+      }
+
+      // Criar resposta
+      const replyData = {
+        ticketId: id,
+        authorType: "admin" as const,
+        authorId: req.session.userId,
+        authorName: req.session.userName || "Admin",
+        message,
+        attachmentUrl,
+      };
+
+      const validation = insertTicketReplySchema.safeParse(replyData);
+      if (!validation.success) {
+        return res.status(400).json({
+          message: "Dados inválidos",
+          errors: validation.error.errors,
+        });
+      }
+
+      const newReply = await db
+        .insert(ticketReplies)
+        .values({ ...validation.data, readByAdmin: true })
+        .returning();
+
+      // Atualizar ticket
+      await db
+        .update(supportTickets)
+        .set({
+          repliesCount: sql`${supportTickets.repliesCount} + 1`,
+          lastReplyAt: new Date(),
+          unreadByDriver: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(supportTickets.id, id));
+
+      // TODO: Enviar notificação push para o motorista
+      const driverId = ticket[0].driverId;
+      const driver = await db
+        .select()
+        .from(drivers)
+        .where(eq(drivers.id, driverId));
+
+      if (driver.length > 0 && driver[0].fcmToken) {
+        await sendPushNotification(
+          driver[0].fcmToken,
+          "Nova resposta no ticket",
+          `Ticket #${ticket[0].ticketNumber}: ${message.substring(0, 100)}`,
+          {
+            type: "ticket_reply",
+            ticketId: id,
+            ticketNumber: ticket[0].ticketNumber,
+          }
+        );
+      }
+
+      res.status(201).json(newReply[0]);
+    } catch (error) {
+      console.error("Erro ao responder ticket:", error);
+      res.status(500).json({ message: "Erro ao responder ticket" });
+    }
+  });
+
+  // ========================
+  // SUPPORT TICKETS - DRIVER APP ENDPOINTS
+  // ========================
+
+  // GET /api/v1/driver/ticket-subjects - Listar assuntos ativos
+  app.get("/api/v1/driver/ticket-subjects", async (req, res) => {
+    try {
+      const subjects = await db
+        .select({
+          id: ticketSubjects.id,
+          name: ticketSubjects.name,
+          description: ticketSubjects.description,
+        })
+        .from(ticketSubjects)
+        .where(eq(ticketSubjects.active, true))
+        .orderBy(ticketSubjects.name);
+
+      res.json({
+        success: true,
+        subjects,
+      });
+    } catch (error) {
+      console.error("Erro ao buscar assuntos:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao buscar assuntos",
+      });
+    }
+  });
+
+  // POST /api/v1/driver/support-tickets - Criar ticket (Driver App)
+  app.post("/api/v1/driver/support-tickets", uploadTicket.single("images"), async (req, res) => {
+    console.log("📝 Criação de ticket - Dados recebidos:");
+    console.log("  Body:", req.body);
+    console.log("  File:", req.file ? req.file.filename : "Nenhum arquivo");
+
+    const { subjectId, message } = req.body;
+
+    if (!subjectId || !message) {
+      console.log("  ❌ Dados incompletos!");
+      return res.status(400).json({
+        success: false,
+        message: "Dados incompletos - subjectId e message são obrigatórios",
+      });
+    }
+
+    try {
+      // Extrair driverId do token de autenticação
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+          success: false,
+          message: "Token de autenticação não fornecido",
+        });
+      }
+
+      const token = authHeader.substring(7);
+      const decodedToken = JSON.parse(Buffer.from(token, "base64").toString());
+      const driverId = decodedToken.id;
+
+      if (!driverId) {
+        return res.status(401).json({
+          success: false,
+          message: "Token inválido",
+        });
+      }
+
+      // Buscar dados do motorista no banco
+      const driverData = await db
+        .select()
+        .from(drivers)
+        .where(eq(drivers.id, driverId))
+        .limit(1);
+
+      if (driverData.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Motorista não encontrado",
+        });
+      }
+
+      const driver = driverData[0];
+
+      console.log("  ✅ Motorista autenticado:", driver.name);
+
+      // Gerar número único do ticket
+      const count = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(supportTickets);
+      const ticketNumber = `TKT-${String(Number(count[0].count) + 1).padStart(5, "0")}`;
+
+      // Preparar URL do anexo
+      let attachmentUrl = null;
+      if (req.file) {
+        attachmentUrl = `/uploads/${req.file.filename}`;
+      }
+
+      const ticketData = {
+        ticketNumber,
+        driverId: driver.id,
+        driverName: driver.name,
+        driverEmail: driver.email || null,
+        driverWhatsapp: driver.mobile,
+        subjectId,
+        message,
+        attachmentUrl,
+        status: "open" as const,
+      };
+
+      console.log("  📋 Dados preparados para validação:", JSON.stringify(ticketData, null, 2));
+
+      const validation = insertSupportTicketSchema.safeParse(ticketData);
+      if (!validation.success) {
+        console.log("  ❌ Erro de validação:", JSON.stringify(validation.error.errors, null, 2));
+        return res.status(400).json({
+          success: false,
+          message: "Dados inválidos",
+          errors: validation.error.errors,
+        });
+      }
+
+      // Adicionar ticketNumber aos dados validados
+      const dataToInsert = {
+        ...validation.data,
+        ticketNumber,
+      };
+
+      const newTicket = await db
+        .insert(supportTickets)
+        .values(dataToInsert)
+        .returning();
+
+      res.status(201).json({
+        success: true,
+        ticket: newTicket[0],
+      });
+    } catch (error) {
+      console.error("Erro ao criar ticket:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao criar ticket",
+      });
+    }
+  });
+
+  // GET /api/v1/driver/support-tickets - Listar tickets do motorista logado
+  app.get("/api/v1/driver/support-tickets", async (req, res) => {
+    const { status } = req.query;
+
+    try {
+      // Extrair driverId do token de autenticação
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({
+          success: false,
+          message: "Token de autenticação não fornecido",
+        });
+      }
+
+      const token = authHeader.substring(7);
+      const decodedToken = JSON.parse(Buffer.from(token, "base64").toString());
+      const driverId = decodedToken.id;
+
+      if (!driverId) {
+        return res.status(401).json({
+          success: false,
+          message: "Token inválido",
+        });
+      }
+
+      let query = db
+        .select({
+          ticket: supportTickets,
+          subject: ticketSubjects,
+        })
+        .from(supportTickets)
+        .leftJoin(ticketSubjects, eq(supportTickets.subjectId, ticketSubjects.id))
+        .where(eq(supportTickets.driverId, driverId));
+
+      if (status) {
+        query = query.where(
+          and(
+            eq(supportTickets.driverId, driverId),
+            eq(supportTickets.status, status as string)
+          )
+        ) as any;
+      }
+
+      const tickets = await query.orderBy(desc(supportTickets.createdAt));
+
+      // Converter URLs de imagens para URLs completas
+      const ticketsWithFullUrls = tickets.map(item => ({
+        ...item,
+        ticket: {
+          ...item.ticket,
+          attachmentUrl: getFullImageUrl(req, item.ticket.attachmentUrl),
+        },
+      }));
+
+      res.json({
+        success: true,
+        tickets: ticketsWithFullUrls,
+      });
+    } catch (error) {
+      console.error("Erro ao listar tickets:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao listar tickets",
+      });
+    }
+  });
+
+  // GET /api/v1/driver/:driverId/support-tickets - Listar tickets do motorista (deprecated - usar endpoint sem driverId)
+  app.get("/api/v1/driver/:driverId/support-tickets", async (req, res) => {
+    const { driverId } = req.params;
+    const { status } = req.query;
+
+    try {
+      let query = db
+        .select({
+          ticket: supportTickets,
+          subject: ticketSubjects,
+        })
+        .from(supportTickets)
+        .leftJoin(ticketSubjects, eq(supportTickets.subjectId, ticketSubjects.id))
+        .where(eq(supportTickets.driverId, driverId));
+
+      if (status) {
+        query = query.where(
+          and(
+            eq(supportTickets.driverId, driverId),
+            eq(supportTickets.status, status as string)
+          )
+        ) as any;
+      }
+
+      const tickets = await query.orderBy(desc(supportTickets.createdAt));
+
+      res.json({
+        success: true,
+        tickets,
+      });
+    } catch (error) {
+      console.error("Erro ao listar tickets:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao listar tickets",
+      });
+    }
+  });
+
+  // GET /api/v1/driver/support-tickets/:id - Ver ticket específico com respostas
+  app.get("/api/v1/driver/support-tickets/:id", async (req, res) => {
+    const { id } = req.params;
+
+    try {
+      const ticket = await db
+        .select({
+          ticket: supportTickets,
+          subject: ticketSubjects,
+        })
+        .from(supportTickets)
+        .leftJoin(ticketSubjects, eq(supportTickets.subjectId, ticketSubjects.id))
+        .where(eq(supportTickets.id, id));
+
+      if (ticket.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Ticket não encontrado",
+        });
+      }
+
+      // Buscar respostas
+      const replies = await db
+        .select()
+        .from(ticketReplies)
+        .where(eq(ticketReplies.ticketId, id))
+        .orderBy(ticketReplies.createdAt);
+
+      // Marcar ticket e respostas como lidas pelo motorista
+      await db
+        .update(supportTickets)
+        .set({ unreadByDriver: false })
+        .where(eq(supportTickets.id, id));
+
+      await db
+        .update(ticketReplies)
+        .set({ readByDriver: true })
+        .where(
+          and(
+            eq(ticketReplies.ticketId, id),
+            eq(ticketReplies.authorType, "admin")
+          )
+        );
+
+      // Converter URLs de imagens para URLs completas
+      const ticketWithFullUrl = {
+        ...ticket[0],
+        ticket: {
+          ...ticket[0].ticket,
+          attachmentUrl: getFullImageUrl(req, ticket[0].ticket.attachmentUrl),
+        },
+      };
+
+      const repliesWithFullUrls = replies.map(reply => ({
+        ...reply,
+        attachmentUrl: getFullImageUrl(req, reply.attachmentUrl),
+      }));
+
+      res.json({
+        success: true,
+        ticket: ticketWithFullUrl,
+        replies: repliesWithFullUrls,
+      });
+    } catch (error) {
+      console.error("Erro ao buscar ticket:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao buscar ticket",
+      });
+    }
+  });
+
+  // POST /api/v1/driver/support-tickets/:id/reply - Responder ticket (Driver App)
+  app.post("/api/v1/driver/support-tickets/:id/reply",
+    (req, res, next) => {
+      console.log("🌐 [PRE-MULTER] Requisição recebida:");
+      console.log("  - Content-Type:", req.headers['content-type']);
+      console.log("  - Method:", req.method);
+      console.log("  - URL:", req.url);
+      console.log("  - Headers:", JSON.stringify(req.headers, null, 2));
+      next();
+    },
+    uploadTicket.single("images"),
+    async (req, res) => {
+    console.log("📱 [DRIVER REPLY] Recebendo resposta de motorista:");
+    console.log("  - Params:", req.params);
+    console.log("  - Body:", req.body);
+    console.log("  - File:", req.file ? {
+      fieldname: req.file.fieldname,
+      filename: req.file.filename,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      path: req.file.path
+    } : "Nenhum arquivo");
+
+    const { id } = req.params;
+    const { driverId, driverName, message } = req.body;
+
+    if (!driverId || !driverName || !message) {
+      console.log("❌ Dados incompletos:", { driverId, driverName, message: message ? "OK" : "MISSING" });
+      return res.status(400).json({
+        success: false,
+        message: "Dados incompletos",
+      });
+    }
+
+    try {
+      // Verificar se o ticket existe e pertence ao motorista
+      const ticket = await db
+        .select()
+        .from(supportTickets)
+        .where(
+          and(
+            eq(supportTickets.id, id),
+            eq(supportTickets.driverId, driverId)
+          )
+        );
+
+      if (ticket.length === 0) {
+        console.log("❌ Ticket não encontrado:", { id, driverId });
+        return res.status(404).json({
+          success: false,
+          message: "Ticket não encontrado",
+        });
+      }
+
+      // Preparar URL do anexo
+      let attachmentUrl = null;
+      if (req.file) {
+        attachmentUrl = `/uploads/${req.file.filename}`;
+        console.log("✅ Arquivo do motorista salvo:", attachmentUrl);
+      } else {
+        console.log("ℹ️  Motorista não enviou arquivo");
+      }
+
+      const replyData = {
+        ticketId: id,
+        authorType: "driver" as const,
+        authorId: driverId,
+        authorName: driverName,
+        message,
+        attachmentUrl,
+      };
+
+      const validation = insertTicketReplySchema.safeParse(replyData);
+      if (!validation.success) {
+        return res.status(400).json({
+          success: false,
+          message: "Dados inválidos",
+          errors: validation.error.errors,
+        });
+      }
+
+      const newReply = await db
+        .insert(ticketReplies)
+        .values({ ...validation.data, readByDriver: true })
+        .returning();
+
+      // Atualizar ticket
+      await db
+        .update(supportTickets)
+        .set({
+          repliesCount: sql`${supportTickets.repliesCount} + 1`,
+          lastReplyAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(supportTickets.id, id));
+
+      res.status(201).json({
+        success: true,
+        reply: newReply[0],
+      });
+    } catch (error) {
+      console.error("Erro ao responder ticket:", error);
+      res.status(500).json({
+        success: false,
+        message: "Erro ao responder ticket",
       });
     }
   });

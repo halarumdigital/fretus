@@ -17,6 +17,8 @@ import MarcasModelos from "@/pages/marcas-modelos";
 import DocumentosMotorista from "@/pages/documentos-motorista";
 import TiposCancelamentoEmpresa from "@/pages/tipos-cancelamento-empresa";
 import Faq from "@/pages/faq";
+import AssuntosTickets from "@/pages/assuntos-tickets";
+import TicketsSuporte from "@/pages/tickets-suporte";
 import CompleteEGanhe from "@/pages/complete-e-ganhe";
 import Indicacao from "@/pages/indicacao";
 import Notificacoes from "@/pages/notificacoes";
@@ -111,6 +113,8 @@ function Router() {
               <Route path="/documentos-motorista" component={DocumentosMotorista} />
               <Route path="/tipos-cancelamento-empresa" component={TiposCancelamentoEmpresa} />
               <Route path="/faq" component={Faq} />
+              <Route path="/suporte/assuntos" component={AssuntosTickets} />
+              <Route path="/suporte/tickets" component={TicketsSuporte} />
               <Route path="/promocoes/complete-e-ganhe" component={CompleteEGanhe} />
               <Route path="/promocoes/indicacao" component={Indicacao} />
               <Route path="/notificacoes" component={Notificacoes} />
