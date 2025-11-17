@@ -187,6 +187,81 @@ export const companies = pgTable("companies", {
 });
 
 // ========================================
+// ROTAS INTERMUNICIPAIS (Rotas entre cidades)
+// ========================================
+export const rotasIntermunicipais = pgTable("rotas_intermunicipais", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  nomeRota: varchar("nome_rota", { length: 255 }).notNull(),
+  cidadeOrigemId: varchar("cidade_origem_id").notNull().references(() => serviceLocations.id),
+  cidadeDestinoId: varchar("cidade_destino_id").notNull().references(() => serviceLocations.id),
+
+  // Dados da rota (calculados via Google Maps ou inseridos manualmente)
+  distanciaKm: numeric("distancia_km", { precision: 10, scale: 2 }).notNull(),
+  tempoMedioMinutos: integer("tempo_medio_minutos").notNull(),
+
+  ativa: boolean("ativa").notNull().default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// ENTREGADOR ROTAS (Rotas que o entregador faz)
+// ========================================
+export const entregadorRotas = pgTable("entregador_rotas", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  entregadorId: varchar("entregador_id").notNull().references(() => drivers.id, { onDelete: 'cascade' }),
+  rotaId: varchar("rota_id").notNull().references(() => rotasIntermunicipais.id, { onDelete: 'cascade' }),
+
+  // Disponibilidade
+  diasSemana: integer("dias_semana").array().notNull(), // [1,2,3,4,5] = Seg a Sex
+  horarioSaida: varchar("horario_saida", { length: 5 }).notNull(), // TIME -> "08:00"
+  horarioChegada: varchar("horario_chegada", { length: 5 }), // TIME -> "11:00"
+
+  // Capacidades definidas pelo entregador
+  capacidadePacotes: integer("capacidade_pacotes").notNull(),
+  capacidadePesoKg: numeric("capacidade_peso_kg", { precision: 10, scale: 2 }).notNull(),
+  capacidadeVolumeM3: numeric("capacidade_volume_m3", { precision: 10, scale: 3 }),
+
+  // Configurações
+  aceitaMultiplasColetas: boolean("aceita_multiplas_coletas").default(true),
+  aceitaMultiplasEntregas: boolean("aceita_multiplas_entregas").default(true),
+  raioColetaKm: numeric("raio_coleta_km", { precision: 10, scale: 2 }),
+
+  ativa: boolean("ativa").default(true),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
+// ENTREGADOR CAPACIDADE DIÁRIA (Controle de capacidade por dia)
+// ========================================
+export const entregadorCapacidadeDiaria = pgTable("entregador_capacidade_diaria", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  entregadorId: varchar("entregador_id").notNull().references(() => drivers.id, { onDelete: 'cascade' }),
+  rotaId: varchar("rota_id").notNull().references(() => rotasIntermunicipais.id, { onDelete: 'cascade' }),
+  data: varchar("data", { length: 10 }).notNull(), // DATE -> "2025-11-20"
+
+  // Capacidade total
+  capacidadeTotalPacotes: integer("capacidade_total_pacotes").notNull(),
+  capacidadeTotalPesoKg: numeric("capacidade_total_peso_kg", { precision: 10, scale: 2 }).notNull(),
+
+  // Já aceito
+  pacotesAceitos: integer("pacotes_aceitos").default(0),
+  pesoAceitoKg: numeric("peso_aceito_kg", { precision: 10, scale: 2 }).default("0"),
+  volumeAceitoM3: numeric("volume_aceito_m3", { precision: 10, scale: 3 }).default("0"),
+
+  entregasAceitas: integer("entregas_aceitas").default(0),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// ========================================
 // CITY PRICES (Preços por Categoria em cada Cidade)
 // ========================================
 export const cityPrices = pgTable("city_prices", {
@@ -210,6 +285,10 @@ export const cityPrices = pgTable("city_prices", {
   // Stop and Return Prices
   stopPrice: numeric("stop_price", { precision: 10, scale: 2 }).default("0"),
   returnPrice: numeric("return_price", { precision: 10, scale: 2 }).default("0"),
+
+  // Tipo de preço: entrega_rapida ou rota_intermunicipal
+  tipo: varchar("tipo", { length: 20 }).notNull().default("entrega_rapida"),
+  rotaIntermunicipalId: varchar("rota_intermunicipal_id").references(() => rotasIntermunicipais.id),
 
   active: boolean("active").notNull().default(true),
 
@@ -812,6 +891,36 @@ export type InsertCompany = z.infer<typeof insertCompanySchema>;
 export type CityPrice = typeof cityPrices.$inferSelect;
 export type InsertCityPrice = z.infer<typeof insertCityPriceSchema>;
 
+export type RotaIntermunicipal = typeof rotasIntermunicipais.$inferSelect;
+export const insertRotaIntermunicipalSchema = createInsertSchema(rotasIntermunicipais).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertRotaIntermunicipal = z.infer<typeof insertRotaIntermunicipalSchema>;
+
+export type EntregadorRota = typeof entregadorRotas.$inferSelect;
+export const insertEntregadorRotaSchema = createInsertSchema(entregadorRotas, {
+  diasSemana: z.array(z.number().min(1).max(7)).min(1, "Selecione pelo menos um dia da semana"),
+  horarioSaida: z.string().regex(/^\d{2}:\d{2}$/, "Formato inválido (HH:MM)"),
+  horarioChegada: z.string().regex(/^\d{2}:\d{2}$/, "Formato inválido (HH:MM)").optional(),
+  capacidadePacotes: z.number().min(1, "Capacidade deve ser maior que 0"),
+  capacidadePesoKg: z.number().min(0.1, "Peso deve ser maior que 0"),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertEntregadorRota = z.infer<typeof insertEntregadorRotaSchema>;
+
+export type EntregadorCapacidadeDiaria = typeof entregadorCapacidadeDiaria.$inferSelect;
+export const insertEntregadorCapacidadeDiariaSchema = createInsertSchema(entregadorCapacidadeDiaria).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertEntregadorCapacidadeDiaria = z.infer<typeof insertEntregadorCapacidadeDiariaSchema>;
+
 export type Driver = typeof drivers.$inferSelect;
 export type InsertDriver = z.infer<typeof insertDriverSchema>;
 
@@ -1266,3 +1375,245 @@ export const insertTicketReplySchema = createInsertSchema(ticketReplies, {
 
 export type TicketReply = typeof ticketReplies.$inferSelect;
 export type InsertTicketReply = z.infer<typeof insertTicketReplySchema>;
+
+// ========================================
+// ENTREGAS INTERMUNICIPAIS (Pedidos de entrega entre cidades)
+// ========================================
+export const entregasIntermunicipais = pgTable("entregas_intermunicipais", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Referências
+  empresaId: varchar("empresa_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+  rotaId: varchar("rota_id").notNull().references(() => rotasIntermunicipais.id),
+  precoId: varchar("preco_id").notNull().references(() => cityPrices.id),
+
+  // Informações da entrega
+  numeroPedido: varchar("numero_pedido", { length: 50 }).notNull().unique(),
+  dataAgendada: varchar("data_agendada", { length: 10 }).notNull(), // DATE como VARCHAR "2025-11-20"
+
+  // Endereços
+  enderecoColetaCompleto: text("endereco_coleta_completo").notNull(),
+  enderecoColetaLatitude: varchar("endereco_coleta_latitude", { length: 50 }),
+  enderecoColetaLongitude: varchar("endereco_coleta_longitude", { length: 50 }),
+  enderecoEntregaCompleto: text("endereco_entrega_completo").notNull(),
+  enderecoEntregaLatitude: varchar("endereco_entrega_latitude", { length: 50 }),
+  enderecoEntregaLongitude: varchar("endereco_entrega_longitude", { length: 50 }),
+
+  // Destinatário
+  destinatarioNome: varchar("destinatario_nome", { length: 255 }).notNull(),
+  destinatarioTelefone: varchar("destinatario_telefone", { length: 20 }).notNull(),
+
+  // Informações do pacote
+  quantidadePacotes: integer("quantidade_pacotes").notNull().default(1),
+  pesoTotalKg: numeric("peso_total_kg", { precision: 10, scale: 2 }).notNull(),
+  volumeTotalM3: numeric("volume_total_m3", { precision: 10, scale: 3 }),
+  descricaoConteudo: text("descricao_conteudo"),
+  observacoes: text("observacoes"),
+
+  // Cálculo de preço (valores salvos no momento da criação)
+  tarifaBase: numeric("tarifa_base", { precision: 10, scale: 2 }).notNull(),
+  precoPorKm: numeric("preco_por_km", { precision: 10, scale: 2 }).notNull(),
+  distanciaKm: numeric("distancia_km", { precision: 10, scale: 2 }).notNull(),
+  valorParada: numeric("valor_parada", { precision: 10, scale: 2 }).default("0"),
+  valorTotal: numeric("valor_total", { precision: 10, scale: 2 }).notNull(),
+
+  // Status da entrega
+  status: varchar("status", { length: 30 }).notNull().default("aguardando_motorista"),
+
+  // Viagem associada (quando motorista aceita)
+  viagemId: varchar("viagem_id").references(() => viagensIntermunicipais.id),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertEntregaIntermunicipalSchema = createInsertSchema(entregasIntermunicipais, {
+  empresaId: z.string().min(1, "Empresa é obrigatória"),
+  rotaId: z.string().min(1, "Rota é obrigatória"),
+  precoId: z.string().min(1, "Preço é obrigatório"),
+  numeroPedido: z.string().min(1, "Número do pedido é obrigatório"),
+  dataAgendada: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida"),
+  enderecoColetaCompleto: z.string().min(1, "Endereço de coleta é obrigatório"),
+  enderecoEntregaCompleto: z.string().min(1, "Endereço de entrega é obrigatório"),
+  destinatarioNome: z.string().min(1, "Nome do destinatário é obrigatório"),
+  destinatarioTelefone: z.string().min(1, "Telefone do destinatário é obrigatório"),
+  quantidadePacotes: z.number().min(1, "Quantidade de pacotes deve ser maior que zero"),
+  pesoTotalKg: z.string().min(1, "Peso total é obrigatório"),
+  tarifaBase: z.string().min(1, "Tarifa base é obrigatória"),
+  precoPorKm: z.string().min(1, "Preço por km é obrigatório"),
+  distanciaKm: z.string().min(1, "Distância é obrigatória"),
+  valorTotal: z.string().min(1, "Valor total é obrigatório"),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type EntregaIntermunicipal = typeof entregasIntermunicipais.$inferSelect;
+export type InsertEntregaIntermunicipal = z.infer<typeof insertEntregaIntermunicipalSchema>;
+
+// ========================================
+// VIAGENS INTERMUNICIPAIS (Viagens dos motoristas)
+// ========================================
+export const viagensIntermunicipais = pgTable("viagens_intermunicipais", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Referências
+  entregadorId: varchar("entregador_id").notNull().references(() => drivers.id, { onDelete: "cascade" }),
+  rotaId: varchar("rota_id").notNull().references(() => rotasIntermunicipais.id),
+  entregadorRotaId: varchar("entregador_rota_id").notNull().references(() => entregadorRotas.id),
+
+  // Data da viagem
+  dataViagem: varchar("data_viagem", { length: 10 }).notNull(), // DATE como VARCHAR "2025-11-20"
+
+  // Status da viagem
+  status: varchar("status", { length: 30 }).notNull().default("agendada"),
+
+  // Capacidade
+  capacidadePacotesTotal: integer("capacidade_pacotes_total").notNull(),
+  capacidadePesoKgTotal: numeric("capacidade_peso_kg_total", { precision: 10, scale: 2 }).notNull(),
+  pacotesAceitos: integer("pacotes_aceitos").default(0),
+  pesoAceitoKg: numeric("peso_aceito_kg", { precision: 10, scale: 2 }).default("0"),
+
+  // Horários
+  horarioSaidaPlanejado: varchar("horario_saida_planejado", { length: 8 }).notNull(), // TIME como VARCHAR "08:00:00"
+  horarioSaidaReal: timestamp("horario_saida_real"),
+  horarioChegadaPrevisto: timestamp("horario_chegada_previsto"),
+  horarioChegadaReal: timestamp("horario_chegada_real"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertViagemIntermunicipalSchema = createInsertSchema(viagensIntermunicipais, {
+  entregadorId: z.string().min(1, "Entregador é obrigatório"),
+  rotaId: z.string().min(1, "Rota é obrigatória"),
+  entregadorRotaId: z.string().min(1, "Configuração de rota do entregador é obrigatória"),
+  dataViagem: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inválida"),
+  capacidadePacotesTotal: z.number().min(1, "Capacidade de pacotes deve ser maior que zero"),
+  capacidadePesoKgTotal: z.string().min(1, "Capacidade de peso é obrigatória"),
+  horarioSaidaPlanejado: z.string().regex(/^\d{2}:\d{2}:\d{2}$/, "Horário inválido"),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type ViagemIntermunicipal = typeof viagensIntermunicipais.$inferSelect;
+export type InsertViagemIntermunicipal = z.infer<typeof insertViagemIntermunicipalSchema>;
+
+// ========================================
+// VIAGEM COLETAS (Controle de coletas nas viagens)
+// ========================================
+export const viagemColetas = pgTable("viagem_coletas", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Referências
+  viagemId: varchar("viagem_id").notNull().references(() => viagensIntermunicipais.id, { onDelete: "cascade" }),
+  entregaId: varchar("entrega_id").notNull().references(() => entregasIntermunicipais.id, { onDelete: "cascade" }),
+
+  // Informações da coleta
+  enderecoColeta: text("endereco_coleta").notNull(),
+  latitude: varchar("latitude", { length: 50 }),
+  longitude: varchar("longitude", { length: 50 }),
+
+  // Status da coleta
+  status: varchar("status", { length: 30 }).notNull().default("pendente"),
+
+  // Ordem de coleta na rota
+  ordemColeta: integer("ordem_coleta").notNull(),
+
+  // Horários
+  horarioPrevisto: timestamp("horario_previsto"),
+  horarioChegada: timestamp("horario_chegada"),
+  horarioColeta: timestamp("horario_coleta"),
+
+  // Informações adicionais
+  observacoes: text("observacoes"),
+  motivoFalha: text("motivo_falha"),
+
+  // Foto do pacote coletado
+  fotoComprovanteUrl: text("foto_comprovante_url"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertViagemColetaSchema = createInsertSchema(viagemColetas, {
+  viagemId: z.string().min(1, "Viagem é obrigatória"),
+  entregaId: z.string().min(1, "Entrega é obrigatória"),
+  enderecoColeta: z.string().min(1, "Endereço de coleta é obrigatório"),
+  ordemColeta: z.number().min(1, "Ordem de coleta deve ser maior que zero"),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type ViagemColeta = typeof viagemColetas.$inferSelect;
+export type InsertViagemColeta = z.infer<typeof insertViagemColetaSchema>;
+
+// ========================================
+// VIAGEM ENTREGAS (Controle de entregas nas viagens)
+// ========================================
+export const viagemEntregas = pgTable("viagem_entregas", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Referências
+  viagemId: varchar("viagem_id").notNull().references(() => viagensIntermunicipais.id, { onDelete: "cascade" }),
+  entregaId: varchar("entrega_id").notNull().references(() => entregasIntermunicipais.id, { onDelete: "cascade" }),
+  coletaId: varchar("coleta_id").notNull().references(() => viagemColetas.id, { onDelete: "cascade" }),
+
+  // Informações da entrega
+  enderecoEntrega: text("endereco_entrega").notNull(),
+  latitude: varchar("latitude", { length: 50 }),
+  longitude: varchar("longitude", { length: 50 }),
+  destinatarioNome: varchar("destinatario_nome", { length: 255 }).notNull(),
+  destinatarioTelefone: varchar("destinatario_telefone", { length: 20 }).notNull(),
+
+  // Status da entrega
+  status: varchar("status", { length: 30 }).notNull().default("pendente"),
+
+  // Ordem de entrega na rota
+  ordemEntrega: integer("ordem_entrega").notNull(),
+
+  // Horários
+  horarioPrevisto: timestamp("horario_previsto"),
+  horarioChegada: timestamp("horario_chegada"),
+  horarioEntrega: timestamp("horario_entrega"),
+
+  // Informações da entrega
+  nomeRecebedor: varchar("nome_recebedor", { length: 255 }),
+  cpfRecebedor: varchar("cpf_recebedor", { length: 14 }),
+  observacoes: text("observacoes"),
+  motivoFalha: text("motivo_falha"),
+
+  // Comprovantes
+  fotoComprovanteUrl: text("foto_comprovante_url"),
+  assinaturaUrl: text("assinatura_url"),
+
+  // Avaliação (opcional)
+  avaliacaoEstrelas: integer("avaliacao_estrelas"),
+  avaliacaoComentario: text("avaliacao_comentario"),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertViagemEntregaSchema = createInsertSchema(viagemEntregas, {
+  viagemId: z.string().min(1, "Viagem é obrigatória"),
+  entregaId: z.string().min(1, "Entrega é obrigatória"),
+  coletaId: z.string().min(1, "Coleta é obrigatória"),
+  enderecoEntrega: z.string().min(1, "Endereço de entrega é obrigatório"),
+  destinatarioNome: z.string().min(1, "Nome do destinatário é obrigatório"),
+  destinatarioTelefone: z.string().min(1, "Telefone do destinatário é obrigatório"),
+  ordemEntrega: z.number().min(1, "Ordem de entrega deve ser maior que zero"),
+  avaliacaoEstrelas: z.number().min(1).max(5).optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type ViagemEntrega = typeof viagemEntregas.$inferSelect;
+export type InsertViagemEntrega = z.infer<typeof insertViagemEntregaSchema>;

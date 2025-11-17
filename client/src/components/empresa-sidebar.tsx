@@ -1,4 +1,4 @@
-import { Home, Package, LogOut, Building2, Menu, ChevronDown, Truck, CheckCircle2, XCircle } from "lucide-react";
+import { Home, Package, LogOut, Building2, Menu, ChevronDown, Truck, CheckCircle2, XCircle, MapPin } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { useMutation } from "@tanstack/react-query";
@@ -64,6 +64,11 @@ export function EmpresaSidebar() {
           path: "/empresa/entregas/canceladas",
         },
       ],
+    },
+    {
+      label: "Entregas Intermunicipais",
+      icon: MapPin,
+      path: "/empresa/entregas-intermunicipais",
     },
   ];
 

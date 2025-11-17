@@ -12,7 +12,12 @@
     "db:seed": "cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev tsx server/seed.ts",
     "db:seed:complete": "cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev tsx server/seed-complete.ts",
     "db:list-users": "cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev tsx server/list-users.ts",
-    "db:check": "cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev tsx server/check-db.ts"
+    "db:check": "cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev tsx server/check-db.ts",
+    "db:migrate:rotas:etapa1": "cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev tsx server/migrate-rotas-intermunicipais-etapa1.ts",
+    "db:migrate:rotas:etapa2": "cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev tsx server/migrate-rotas-intermunicipais-etapa2.ts",
+    "db:migrate:rotas:etapa3": "cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev tsx server/migrate-rotas-intermunicipais-etapa3.ts",
+    "db:migrate:rotas:etapa4": "cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev tsx server/migrate-rotas-intermunicipais-etapa4.ts",
+    "db:migrate:rotas:etapa5": "cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev tsx server/migrate-rotas-intermunicipais-etapa5.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.931.0",

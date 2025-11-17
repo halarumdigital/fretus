@@ -51,6 +51,24 @@ import {
   type InsertSettings,
   type CommissionTier,
   type InsertCommissionTier,
+  rotasIntermunicipais,
+  type RotaIntermunicipal,
+  type InsertRotaIntermunicipal,
+  entregasIntermunicipais,
+  type EntregaIntermunicipal,
+  type InsertEntregaIntermunicipal,
+  viagensIntermunicipais,
+  type ViagemIntermunicipal,
+  type InsertViagemIntermunicipal,
+  viagemColetas,
+  type ViagemColeta,
+  type InsertViagemColeta,
+  viagemEntregas,
+  type ViagemEntrega,
+  type InsertViagemEntrega,
+  entregadorRotas,
+  type EntregadorRota,
+  type InsertEntregadorRota,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, sql } from "drizzle-orm";
@@ -172,6 +190,32 @@ export interface IStorage {
   getDriverCommissionPercentage(driverId: string): Promise<number>;
   incrementDriverMonthlyDeliveries(driverId: string): Promise<void>;
   resetMonthlyDeliveryCounters(): Promise<void>;
+
+  // ===== ROTAS INTERMUNICIPAIS =====
+  getAllRotasIntermunicipais(): Promise<any[]>;
+  getRotaIntermunicipal(id: string): Promise<RotaIntermunicipal | undefined>;
+  createRotaIntermunicipal(data: InsertRotaIntermunicipal): Promise<RotaIntermunicipal>;
+  updateRotaIntermunicipal(id: string, data: Partial<InsertRotaIntermunicipal>): Promise<RotaIntermunicipal | undefined>;
+  deleteRotaIntermunicipal(id: string): Promise<void>;
+
+  // ===== ENTREGAS INTERMUNICIPAIS =====
+  getAllEntregasIntermunicipais(): Promise<any[]>;
+  getEntregasIntermunicipasByEmpresa(empresaId: string): Promise<any[]>;
+  getEntregasIntermunicipasByRota(rotaId: string, dataAgendada: string): Promise<any[]>;
+  getEntregaIntermunicipal(id: string): Promise<EntregaIntermunicipal | undefined>;
+  createEntregaIntermunicipal(data: InsertEntregaIntermunicipal): Promise<EntregaIntermunicipal>;
+  updateEntregaIntermunicipal(id: string, data: Partial<InsertEntregaIntermunicipal>): Promise<EntregaIntermunicipal | undefined>;
+  deleteEntregaIntermunicipal(id: string): Promise<void>;
+
+  // ===== VIAGENS INTERMUNICIPAIS =====
+  getAllViagensIntermunicipais(): Promise<any[]>;
+  getViagensIntermunicipasByEntregador(entregadorId: string): Promise<any[]>;
+  getViagensIntermunicipasByRota(rotaId: string, dataViagem: string): Promise<any[]>;
+  getViagemIntermunicipal(id: string): Promise<ViagemIntermunicipal | undefined>;
+  createViagemIntermunicipal(data: InsertViagemIntermunicipal): Promise<ViagemIntermunicipal>;
+  updateViagemIntermunicipal(id: string, data: Partial<InsertViagemIntermunicipal>): Promise<ViagemIntermunicipal | undefined>;
+  deleteViagemIntermunicipal(id: string): Promise<void>;
+  getMotoristasComRotaConfigurada(rotaId: string, dataViagem: string): Promise<any[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -658,13 +702,17 @@ export class DatabaseStorage implements IStorage {
         cancellationFee: cityPrices.cancellationFee,
         stopPrice: cityPrices.stopPrice,
         returnPrice: cityPrices.returnPrice,
+        tipo: cityPrices.tipo,
+        rotaIntermunicipalId: cityPrices.rotaIntermunicipalId,
+        rotaIntermunicipalNome: rotasIntermunicipais.nomeRota,
         active: cityPrices.active,
         createdAt: cityPrices.createdAt,
         updatedAt: cityPrices.updatedAt,
       })
       .from(cityPrices)
       .leftJoin(serviceLocations, eq(cityPrices.serviceLocationId, serviceLocations.id))
-      .leftJoin(vehicleTypes, eq(cityPrices.vehicleTypeId, vehicleTypes.id));
+      .leftJoin(vehicleTypes, eq(cityPrices.vehicleTypeId, vehicleTypes.id))
+      .leftJoin(rotasIntermunicipais, eq(cityPrices.rotaIntermunicipalId, rotasIntermunicipais.id));
 
     return result;
   }
@@ -1072,6 +1120,489 @@ export class DatabaseStorage implements IStorage {
       });
 
     console.log("✅ Contadores mensais resetados com sucesso!");
+  }
+
+  // ========================================
+  // ROTAS INTERMUNICIPAIS
+  // ========================================
+  async getAllRotasIntermunicipais(): Promise<any[]> {
+    const result = await db
+      .select({
+        id: rotasIntermunicipais.id,
+        nomeRota: rotasIntermunicipais.nomeRota,
+        cidadeOrigemId: rotasIntermunicipais.cidadeOrigemId,
+        cidadeDestinoId: rotasIntermunicipais.cidadeDestinoId,
+        cidadeOrigemNome: sql<string>`origem.name`,
+        cidadeDestinoNome: sql<string>`destino.name`,
+        distanciaKm: rotasIntermunicipais.distanciaKm,
+        tempoMedioMinutos: rotasIntermunicipais.tempoMedioMinutos,
+        ativa: rotasIntermunicipais.ativa,
+        createdAt: rotasIntermunicipais.createdAt,
+        updatedAt: rotasIntermunicipais.updatedAt,
+      })
+      .from(rotasIntermunicipais)
+      .leftJoin(
+        sql`service_locations as origem`,
+        sql`${rotasIntermunicipais.cidadeOrigemId} = origem.id`
+      )
+      .leftJoin(
+        sql`service_locations as destino`,
+        sql`${rotasIntermunicipais.cidadeDestinoId} = destino.id`
+      )
+      .orderBy(rotasIntermunicipais.nomeRota);
+
+    return result;
+  }
+
+  async getRotaIntermunicipal(id: string): Promise<RotaIntermunicipal | undefined> {
+    const [rota] = await db
+      .select()
+      .from(rotasIntermunicipais)
+      .where(eq(rotasIntermunicipais.id, id));
+    return rota || undefined;
+  }
+
+  async createRotaIntermunicipal(data: InsertRotaIntermunicipal): Promise<RotaIntermunicipal> {
+    const [rota] = await db
+      .insert(rotasIntermunicipais)
+      .values(data)
+      .returning();
+    return rota;
+  }
+
+  async updateRotaIntermunicipal(id: string, data: Partial<InsertRotaIntermunicipal>): Promise<RotaIntermunicipal | undefined> {
+    const [updated] = await db
+      .update(rotasIntermunicipais)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(rotasIntermunicipais.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteRotaIntermunicipal(id: string): Promise<void> {
+    await db.delete(rotasIntermunicipais).where(eq(rotasIntermunicipais.id, id));
+  }
+
+  // ========================================
+  // ENTREGAS INTERMUNICIPAIS
+  // ========================================
+  async getAllEntregasIntermunicipais(): Promise<any[]> {
+    const result = await db
+      .select({
+        id: entregasIntermunicipais.id,
+        empresaId: entregasIntermunicipais.empresaId,
+        empresaNome: companies.name,
+        rotaId: entregasIntermunicipais.rotaId,
+        rotaNome: rotasIntermunicipais.nomeRota,
+        precoId: entregasIntermunicipais.precoId,
+        numeroPedido: entregasIntermunicipais.numeroPedido,
+        dataAgendada: entregasIntermunicipais.dataAgendada,
+        enderecoColetaCompleto: entregasIntermunicipais.enderecoColetaCompleto,
+        enderecoEntregaCompleto: entregasIntermunicipais.enderecoEntregaCompleto,
+        destinatarioNome: entregasIntermunicipais.destinatarioNome,
+        destinatarioTelefone: entregasIntermunicipais.destinatarioTelefone,
+        quantidadePacotes: entregasIntermunicipais.quantidadePacotes,
+        pesoTotalKg: entregasIntermunicipais.pesoTotalKg,
+        valorTotal: entregasIntermunicipais.valorTotal,
+        status: entregasIntermunicipais.status,
+        viagemId: entregasIntermunicipais.viagemId,
+        createdAt: entregasIntermunicipais.createdAt,
+        updatedAt: entregasIntermunicipais.updatedAt,
+      })
+      .from(entregasIntermunicipais)
+      .leftJoin(companies, eq(entregasIntermunicipais.empresaId, companies.id))
+      .leftJoin(rotasIntermunicipais, eq(entregasIntermunicipais.rotaId, rotasIntermunicipais.id))
+      .orderBy(desc(entregasIntermunicipais.createdAt));
+
+    return result;
+  }
+
+  async getEntregasIntermunicipasByEmpresa(empresaId: string): Promise<any[]> {
+    const result = await db
+      .select({
+        id: entregasIntermunicipais.id,
+        empresaId: entregasIntermunicipais.empresaId,
+        rotaId: entregasIntermunicipais.rotaId,
+        rotaNome: rotasIntermunicipais.nomeRota,
+        numeroPedido: entregasIntermunicipais.numeroPedido,
+        dataAgendada: entregasIntermunicipais.dataAgendada,
+        enderecoColetaCompleto: entregasIntermunicipais.enderecoColetaCompleto,
+        enderecoEntregaCompleto: entregasIntermunicipais.enderecoEntregaCompleto,
+        destinatarioNome: entregasIntermunicipais.destinatarioNome,
+        destinatarioTelefone: entregasIntermunicipais.destinatarioTelefone,
+        quantidadePacotes: entregasIntermunicipais.quantidadePacotes,
+        pesoTotalKg: entregasIntermunicipais.pesoTotalKg,
+        valorTotal: entregasIntermunicipais.valorTotal,
+        status: entregasIntermunicipais.status,
+        viagemId: entregasIntermunicipais.viagemId,
+        createdAt: entregasIntermunicipais.createdAt,
+        updatedAt: entregasIntermunicipais.updatedAt,
+      })
+      .from(entregasIntermunicipais)
+      .leftJoin(rotasIntermunicipais, eq(entregasIntermunicipais.rotaId, rotasIntermunicipais.id))
+      .where(eq(entregasIntermunicipais.empresaId, empresaId))
+      .orderBy(desc(entregasIntermunicipais.createdAt));
+
+    return result;
+  }
+
+  async getEntregasIntermunicipasByRota(rotaId: string, dataAgendada: string): Promise<any[]> {
+    const result = await db
+      .select()
+      .from(entregasIntermunicipais)
+      .where(
+        and(
+          eq(entregasIntermunicipais.rotaId, rotaId),
+          eq(entregasIntermunicipais.dataAgendada, dataAgendada)
+        )
+      )
+      .orderBy(entregasIntermunicipais.createdAt);
+
+    return result;
+  }
+
+  async getEntregaIntermunicipal(id: string): Promise<EntregaIntermunicipal | undefined> {
+    const [entrega] = await db
+      .select()
+      .from(entregasIntermunicipais)
+      .where(eq(entregasIntermunicipais.id, id));
+    return entrega || undefined;
+  }
+
+  async createEntregaIntermunicipal(data: InsertEntregaIntermunicipal): Promise<EntregaIntermunicipal> {
+    const [entrega] = await db
+      .insert(entregasIntermunicipais)
+      .values(data)
+      .returning();
+    return entrega;
+  }
+
+  async updateEntregaIntermunicipal(id: string, data: Partial<InsertEntregaIntermunicipal>): Promise<EntregaIntermunicipal | undefined> {
+    const [updated] = await db
+      .update(entregasIntermunicipais)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(entregasIntermunicipais.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteEntregaIntermunicipal(id: string): Promise<void> {
+    await db.delete(entregasIntermunicipais).where(eq(entregasIntermunicipais.id, id));
+  }
+
+  // ========================================
+  // VIAGENS INTERMUNICIPAIS
+  // ========================================
+  async getAllViagensIntermunicipais(): Promise<any[]> {
+    const result = await db
+      .select({
+        id: viagensIntermunicipais.id,
+        entregadorId: viagensIntermunicipais.entregadorId,
+        entregadorNome: drivers.name,
+        rotaId: viagensIntermunicipais.rotaId,
+        rotaNome: rotasIntermunicipais.nomeRota,
+        dataViagem: viagensIntermunicipais.dataViagem,
+        status: viagensIntermunicipais.status,
+        capacidadePacotesTotal: viagensIntermunicipais.capacidadePacotesTotal,
+        capacidadePesoKgTotal: viagensIntermunicipais.capacidadePesoKgTotal,
+        pacotesAceitos: viagensIntermunicipais.pacotesAceitos,
+        pesoAceitoKg: viagensIntermunicipais.pesoAceitoKg,
+        horarioSaidaPlanejado: viagensIntermunicipais.horarioSaidaPlanejado,
+        horarioSaidaReal: viagensIntermunicipais.horarioSaidaReal,
+        horarioChegadaPrevisto: viagensIntermunicipais.horarioChegadaPrevisto,
+        horarioChegadaReal: viagensIntermunicipais.horarioChegadaReal,
+        createdAt: viagensIntermunicipais.createdAt,
+        updatedAt: viagensIntermunicipais.updatedAt,
+      })
+      .from(viagensIntermunicipais)
+      .leftJoin(drivers, eq(viagensIntermunicipais.entregadorId, drivers.id))
+      .leftJoin(rotasIntermunicipais, eq(viagensIntermunicipais.rotaId, rotasIntermunicipais.id))
+      .orderBy(desc(viagensIntermunicipais.dataViagem));
+
+    return result;
+  }
+
+  async getViagensIntermunicipasByEntregador(entregadorId: string): Promise<any[]> {
+    const result = await db
+      .select({
+        id: viagensIntermunicipais.id,
+        rotaId: viagensIntermunicipais.rotaId,
+        rotaNome: rotasIntermunicipais.nomeRota,
+        dataViagem: viagensIntermunicipais.dataViagem,
+        status: viagensIntermunicipais.status,
+        capacidadePacotesTotal: viagensIntermunicipais.capacidadePacotesTotal,
+        capacidadePesoKgTotal: viagensIntermunicipais.capacidadePesoKgTotal,
+        pacotesAceitos: viagensIntermunicipais.pacotesAceitos,
+        pesoAceitoKg: viagensIntermunicipais.pesoAceitoKg,
+        horarioSaidaPlanejado: viagensIntermunicipais.horarioSaidaPlanejado,
+        horarioSaidaReal: viagensIntermunicipais.horarioSaidaReal,
+        createdAt: viagensIntermunicipais.createdAt,
+        updatedAt: viagensIntermunicipais.updatedAt,
+      })
+      .from(viagensIntermunicipais)
+      .leftJoin(rotasIntermunicipais, eq(viagensIntermunicipais.rotaId, rotasIntermunicipais.id))
+      .where(eq(viagensIntermunicipais.entregadorId, entregadorId))
+      .orderBy(desc(viagensIntermunicipais.dataViagem));
+
+    return result;
+  }
+
+  async getViagensIntermunicipasByRota(rotaId: string, dataViagem: string): Promise<any[]> {
+    const result = await db
+      .select()
+      .from(viagensIntermunicipais)
+      .where(
+        and(
+          eq(viagensIntermunicipais.rotaId, rotaId),
+          sql`${viagensIntermunicipais.dataViagem}::text = ${dataViagem}`
+        )
+      )
+      .orderBy(viagensIntermunicipais.horarioSaidaPlanejado);
+
+    return result;
+  }
+
+  async getViagemIntermunicipal(id: string): Promise<ViagemIntermunicipal | undefined> {
+    const [viagem] = await db
+      .select()
+      .from(viagensIntermunicipais)
+      .where(eq(viagensIntermunicipais.id, id));
+    return viagem || undefined;
+  }
+
+  async createViagemIntermunicipal(data: InsertViagemIntermunicipal): Promise<ViagemIntermunicipal> {
+    const [viagem] = await db
+      .insert(viagensIntermunicipais)
+      .values(data)
+      .returning();
+    return viagem;
+  }
+
+  async updateViagemIntermunicipal(id: string, data: Partial<InsertViagemIntermunicipal>): Promise<ViagemIntermunicipal | undefined> {
+    const [updated] = await db
+      .update(viagensIntermunicipais)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(viagensIntermunicipais.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteViagemIntermunicipal(id: string): Promise<void> {
+    await db.delete(viagensIntermunicipais).where(eq(viagensIntermunicipais.id, id));
+  }
+
+  async getMotoristasComRotaConfigurada(rotaId: string, dataViagem: string): Promise<any[]> {
+    const result = await db
+      .select({
+        id: drivers.id,
+        name: drivers.name,
+        fcmToken: drivers.fcmToken,
+      })
+      .from(viagensIntermunicipais)
+      .innerJoin(drivers, eq(viagensIntermunicipais.entregadorId, drivers.id))
+      .where(
+        and(
+          eq(viagensIntermunicipais.rotaId, rotaId),
+          sql`${viagensIntermunicipais.dataViagem}::text = ${dataViagem}`,
+          eq(drivers.approve, true), // Motorista aprovado
+          eq(drivers.available, true) // Motorista disponível
+        )
+      );
+
+    return result;
+  }
+
+  // ========================================
+  // VIAGEM COLETAS
+  // ========================================
+  async getViagemColetas(viagemId: string): Promise<any[]> {
+    const result = await db
+      .select()
+      .from(viagemColetas)
+      .where(eq(viagemColetas.viagemId, viagemId))
+      .orderBy(viagemColetas.ordemColeta);
+    return result;
+  }
+
+  async getViagemColeta(id: string): Promise<ViagemColeta | undefined> {
+    const [coleta] = await db
+      .select()
+      .from(viagemColetas)
+      .where(eq(viagemColetas.id, id));
+    return coleta || undefined;
+  }
+
+  async updateViagemColeta(id: string, data: Partial<InsertViagemColeta>): Promise<ViagemColeta | undefined> {
+    const [updated] = await db
+      .update(viagemColetas)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(viagemColetas.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  // ========================================
+  // VIAGEM ENTREGAS
+  // ========================================
+  async getViagemEntregas(viagemId: string): Promise<any[]> {
+    const result = await db
+      .select()
+      .from(viagemEntregas)
+      .where(eq(viagemEntregas.viagemId, viagemId))
+      .orderBy(viagemEntregas.ordemEntrega);
+    return result;
+  }
+
+  async getViagemEntrega(id: string): Promise<ViagemEntrega | undefined> {
+    const [entrega] = await db
+      .select()
+      .from(viagemEntregas)
+      .where(eq(viagemEntregas.id, id));
+    return entrega || undefined;
+  }
+
+  async updateViagemEntrega(id: string, data: Partial<InsertViagemEntrega>): Promise<ViagemEntrega | undefined> {
+    const [updated] = await db
+      .update(viagemEntregas)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(viagemEntregas.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  // ========================================
+  // ENTREGADOR ROTAS (Configuração de rotas do motorista)
+  // ========================================
+  async getAllEntregadorRotas(): Promise<any[]> {
+    const result = await db
+      .select({
+        id: entregadorRotas.id,
+        entregadorId: entregadorRotas.entregadorId,
+        entregadorNome: drivers.name,
+        rotaId: entregadorRotas.rotaId,
+        rotaNome: rotasIntermunicipais.nomeRota,
+        capacidadePacotes: entregadorRotas.capacidadePacotes,
+        capacidadePesoKg: entregadorRotas.capacidadePesoKg,
+        horarioSaidaPadrao: entregadorRotas.horarioSaidaPadrao,
+        ativo: entregadorRotas.ativo,
+        createdAt: entregadorRotas.createdAt,
+        updatedAt: entregadorRotas.updatedAt,
+      })
+      .from(entregadorRotas)
+      .leftJoin(drivers, eq(entregadorRotas.entregadorId, drivers.id))
+      .leftJoin(rotasIntermunicipais, eq(entregadorRotas.rotaId, rotasIntermunicipais.id))
+      .orderBy(desc(entregadorRotas.createdAt));
+    return result;
+  }
+
+  async getEntregadorRotasByEntregador(entregadorId: string): Promise<any[]> {
+    const result = await db
+      .select({
+        id: entregadorRotas.id,
+        rotaId: entregadorRotas.rotaId,
+        rotaNome: rotasIntermunicipais.nomeRota,
+        cidadeOrigemId: rotasIntermunicipais.cidadeOrigemId,
+        cidadeDestinoId: rotasIntermunicipais.cidadeDestinoId,
+        cidadeOrigemNome: sql<string>`cidade_origem.name`,
+        cidadeDestinoNome: sql<string>`cidade_destino.name`,
+        distanciaKm: rotasIntermunicipais.distanciaKm,
+        tempoEstimadoMinutos: rotasIntermunicipais.tempoEstimadoMinutos,
+        capacidadePacotes: entregadorRotas.capacidadePacotes,
+        capacidadePesoKg: entregadorRotas.capacidadePesoKg,
+        horarioSaidaPadrao: entregadorRotas.horarioSaidaPadrao,
+        ativo: entregadorRotas.ativo,
+      })
+      .from(entregadorRotas)
+      .leftJoin(rotasIntermunicipais, eq(entregadorRotas.rotaId, rotasIntermunicipais.id))
+      .leftJoin(sql`service_locations AS cidade_origem`, sql`${rotasIntermunicipais.cidadeOrigemId} = cidade_origem.id`)
+      .leftJoin(sql`service_locations AS cidade_destino`, sql`${rotasIntermunicipais.cidadeDestinoId} = cidade_destino.id`)
+      .where(eq(entregadorRotas.entregadorId, entregadorId))
+      .orderBy(rotasIntermunicipais.nomeRota);
+    return result;
+  }
+
+  async getEntregadorRota(id: string): Promise<EntregadorRota | undefined> {
+    const [rota] = await db
+      .select()
+      .from(entregadorRotas)
+      .where(eq(entregadorRotas.id, id));
+    return rota || undefined;
+  }
+
+  async createEntregadorRota(data: InsertEntregadorRota): Promise<EntregadorRota> {
+    const [rota] = await db
+      .insert(entregadorRotas)
+      .values(data)
+      .returning();
+    return rota;
+  }
+
+  async updateEntregadorRota(id: string, data: Partial<InsertEntregadorRota>): Promise<EntregadorRota | undefined> {
+    const [updated] = await db
+      .update(entregadorRotas)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(entregadorRotas.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteEntregadorRota(id: string): Promise<void> {
+    await db.delete(entregadorRotas).where(eq(entregadorRotas.id, id));
+  }
+
+  // Buscar entregas disponíveis para um motorista (baseado nas suas rotas configuradas)
+  async getEntregasDisponiveisParaEntregador(entregadorId: string, dataViagem: string): Promise<any[]> {
+    // Primeiro buscar as rotas do motorista
+    const rotasDoMotorista = await db
+      .select({ rotaId: entregadorRotas.rotaId })
+      .from(entregadorRotas)
+      .where(
+        and(
+          eq(entregadorRotas.entregadorId, entregadorId),
+          eq(entregadorRotas.ativo, true)
+        )
+      );
+
+    if (rotasDoMotorista.length === 0) {
+      return [];
+    }
+
+    const rotaIds = rotasDoMotorista.map(r => r.rotaId);
+
+    // Buscar entregas disponíveis nessas rotas
+    const result = await db
+      .select({
+        id: entregasIntermunicipais.id,
+        numeroPedido: entregasIntermunicipais.numeroPedido,
+        empresaId: entregasIntermunicipais.empresaId,
+        empresaNome: companies.companyName,
+        rotaId: entregasIntermunicipais.rotaId,
+        rotaNome: rotasIntermunicipais.nomeRota,
+        dataAgendada: entregasIntermunicipais.dataAgendada,
+        enderecoColetaCompleto: entregasIntermunicipais.enderecoColetaCompleto,
+        enderecoEntregaCompleto: entregasIntermunicipais.enderecoEntregaCompleto,
+        destinatarioNome: entregasIntermunicipais.destinatarioNome,
+        destinatarioTelefone: entregasIntermunicipais.destinatarioTelefone,
+        quantidadePacotes: entregasIntermunicipais.quantidadePacotes,
+        pesoTotalKg: entregasIntermunicipais.pesoTotalKg,
+        valorTotal: entregasIntermunicipais.valorTotal,
+        status: entregasIntermunicipais.status,
+        descricaoConteudo: entregasIntermunicipais.descricaoConteudo,
+        createdAt: entregasIntermunicipais.createdAt,
+      })
+      .from(entregasIntermunicipais)
+      .leftJoin(companies, eq(entregasIntermunicipais.empresaId, companies.id))
+      .leftJoin(rotasIntermunicipais, eq(entregasIntermunicipais.rotaId, rotasIntermunicipais.id))
+      .where(
+        and(
+          sql`${entregasIntermunicipais.rotaId} = ANY(${rotaIds})`,
+          sql`${entregasIntermunicipais.dataAgendada}::text = ${dataViagem}`,
+          eq(entregasIntermunicipais.status, "aguardando_motorista")
+        )
+      )
+      .orderBy(entregasIntermunicipais.createdAt);
+
+    return result;
   }
 }
 

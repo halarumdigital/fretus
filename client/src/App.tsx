@@ -24,6 +24,7 @@ import Indicacao from "@/pages/indicacao";
 import Notificacoes from "@/pages/notificacoes";
 import Empresas from "@/pages/empresas";
 import Precos from "@/pages/precos";
+import RotasIntermunicipais from "@/pages/rotas-intermunicipais";
 import MotoristasAtivos from "@/pages/motoristas-ativos";
 import MotoristasBloqueados from "@/pages/motoristas-bloqueados";
 import MotoristasAguardando from "@/pages/motoristas-aguardando";
@@ -35,9 +36,12 @@ import EmpresaEntregas from "@/pages/empresa-entregas";
 import EmpresaEntregasEmAndamento from "@/pages/empresa-entregas-em-andamento";
 import EmpresaEntregasConcluidas from "@/pages/empresa-entregas-concluidas";
 import EmpresaEntregasCanceladas from "@/pages/empresa-entregas-canceladas";
+import EntregasIntermunicipais from "@/pages/entregas-intermunicipais";
 import EntregasEmAndamento from "@/pages/entregas-em-andamento";
 import EntregasConcluidas from "@/pages/entregas-concluidas";
 import EntregasCanceladas from "@/pages/entregas-canceladas";
+import AdminEntregasIntermunicipais from "@/pages/admin-entregas-intermunicipais";
+import AdminViagensIntermunicipais from "@/pages/admin-viagens-intermunicipais";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -85,6 +89,7 @@ function Router() {
               <Route path="/empresa/entregas/concluidas" component={EmpresaEntregasConcluidas} />
               <Route path="/empresa/entregas/canceladas" component={EmpresaEntregasCanceladas} />
               <Route path="/empresa/entregas" component={EmpresaEntregas} />
+              <Route path="/empresa/entregas-intermunicipais" component={EntregasIntermunicipais} />
               <Route component={NotFound} />
             </Switch>
           </main>
@@ -120,12 +125,15 @@ function Router() {
               <Route path="/notificacoes" component={Notificacoes} />
               <Route path="/empresas" component={Empresas} />
               <Route path="/precos" component={Precos} />
+              <Route path="/rotas-intermunicipais" component={RotasIntermunicipais} />
               <Route path="/motoristas/ativos" component={MotoristasAtivos} />
               <Route path="/motoristas/bloqueados" component={MotoristasBloqueados} />
               <Route path="/motoristas/aguardando" component={MotoristasAguardando} />
               <Route path="/entregas/em-andamento" component={EntregasEmAndamento} />
               <Route path="/entregas/concluidas" component={EntregasConcluidas} />
               <Route path="/entregas/canceladas" component={EntregasCanceladas} />
+              <Route path="/admin/entregas-intermunicipais" component={AdminEntregasIntermunicipais} />
+              <Route path="/admin/viagens-intermunicipais" component={AdminViagensIntermunicipais} />
               <Route path="/configuracoes" component={Configuracoes} />
               <Route component={NotFound} />
             </Switch>

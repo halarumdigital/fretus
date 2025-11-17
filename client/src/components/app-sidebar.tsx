@@ -1,4 +1,4 @@
-import { Home, Users, MapPin, Car, DollarSign, UserCog, Settings, LogOut, ChevronDown, FolderTree, FileText, CarFront, Building2, Map, Package, XCircle, Truck, CheckCircle2, Gift, Bell, HelpCircle, UserPlus, MessageSquare, Tag } from "lucide-react";
+import { Home, Users, MapPin, Car, DollarSign, UserCog, Settings, LogOut, ChevronDown, FolderTree, FileText, CarFront, Building2, Map, Package, XCircle, Truck, CheckCircle2, Gift, Bell, HelpCircle, UserPlus, MessageSquare, Tag, Route } from "lucide-react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -111,6 +111,11 @@ const menuItems = [
     icon: DollarSign,
   },
   {
+    title: "Rotas Intermunicipais",
+    url: "/rotas-intermunicipais",
+    icon: Route,
+  },
+  {
     title: "Motoristas",
     icon: UserCog,
     items: [
@@ -149,6 +154,16 @@ const menuItems = [
         title: "Canceladas",
         url: "/entregas/canceladas",
         icon: XCircle,
+      },
+      {
+        title: "Intermunicipais",
+        url: "/admin/entregas-intermunicipais",
+        icon: Route,
+      },
+      {
+        title: "Viagens Motoristas",
+        url: "/admin/viagens-intermunicipais",
+        icon: Truck,
       },
     ],
   },

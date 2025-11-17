@@ -59,6 +59,9 @@ type CityPrice = {
   basePrice: string;
   pricePerDistance: string;
   pricePerTime: string;
+  tipo: string;
+  rotaIntermunicipalId?: string;
+  rotaIntermunicipalNome?: string;
   active: boolean;
 };
 
@@ -72,8 +75,15 @@ type VehicleType = {
   name: string;
 };
 
+type RotaIntermunicipal = {
+  id: string;
+  nomeRota: string;
+};
+
 const priceSchema = z.object({
-  serviceLocationId: z.string().min(1, "Cidade é obrigatória"),
+  tipo: z.enum(["entrega_rapida", "rota_intermunicipal"]).default("entrega_rapida"),
+  rotaIntermunicipalId: z.string().optional(),
+  serviceLocationId: z.string().optional(),
   vehicleTypeId: z.string().min(1, "Categoria é obrigatória"),
   basePrice: z.string().min(1, "Tarifa base é obrigatória"),
   pricePerDistance: z.string().min(1, "Preço por km é obrigatório"),
@@ -85,6 +95,27 @@ const priceSchema = z.object({
   stopPrice: z.string().default("0"),
   returnPrice: z.string().default("0"),
   active: z.boolean().default(true),
+}).refine((data) => {
+  // Se for rota intermunicipal, precisa ter rotaIntermunicipalId
+  if (data.tipo === "rota_intermunicipal") {
+    return !!data.rotaIntermunicipalId;
+  }
+  // Se for entrega rápida, precisa ter serviceLocationId
+  if (data.tipo === "entrega_rapida") {
+    return !!data.serviceLocationId;
+  }
+  return true;
+}, {
+  message: "Campo obrigatório para este tipo de preço",
+  path: ["serviceLocationId"],
+}).refine((data) => {
+  if (data.tipo === "rota_intermunicipal") {
+    return !!data.rotaIntermunicipalId;
+  }
+  return true;
+}, {
+  message: "Rota intermunicipal é obrigatória quando o tipo é 'Rota Intermunicipal'",
+  path: ["rotaIntermunicipalId"],
 });
 
 type PriceForm = z.infer<typeof priceSchema>;
@@ -107,6 +138,11 @@ export default function Precos() {
   // Buscar categorias
   const { data: categories = [] } = useQuery<VehicleType[]>({
     queryKey: ["/api/vehicle-types"],
+  });
+
+  // Buscar rotas intermunicipais
+  const { data: rotas = [] } = useQuery<RotaIntermunicipal[]>({
+    queryKey: ["/api/rotas-intermunicipais"],
   });
 
   // Mutation para criar preço
@@ -159,6 +195,8 @@ export default function Precos() {
   const form = useForm<PriceForm>({
     resolver: zodResolver(priceSchema),
     defaultValues: {
+      tipo: "entrega_rapida",
+      rotaIntermunicipalId: "",
       serviceLocationId: "",
       vehicleTypeId: "",
       basePrice: "",
@@ -174,6 +212,9 @@ export default function Precos() {
     },
   });
 
+  // Watch tipo field to conditionally show rota selector
+  const tipoValue = form.watch("tipo");
+
   const onSubmit = (data: PriceForm) => {
     if (editingPrice) {
       updateMutation.mutate({ id: editingPrice.id, data });
@@ -185,6 +226,8 @@ export default function Precos() {
   const handleEdit = (preco: any) => {
     setEditingPrice(preco);
     form.reset({
+      tipo: preco.tipo || "entrega_rapida",
+      rotaIntermunicipalId: preco.rotaIntermunicipalId || "",
       serviceLocationId: preco.serviceLocationId,
       vehicleTypeId: preco.vehicleTypeId,
       basePrice: preco.basePrice,
@@ -204,6 +247,8 @@ export default function Precos() {
   const handleNewPrice = () => {
     setEditingPrice(null);
     form.reset({
+      tipo: "entrega_rapida",
+      rotaIntermunicipalId: "",
       serviceLocationId: "",
       vehicleTypeId: "",
       basePrice: "",
@@ -270,24 +315,50 @@ export default function Precos() {
 
                 <Form {...form}>
                   <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                    {/* Seleção de Cidade e Categoria */}
-                    <div className="grid grid-cols-2 gap-4">
+                    {/* Seleção de Tipo */}
+                    <FormField
+                      control={form.control}
+                      name="tipo"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Tipo de Preço</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Selecione o tipo" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="entrega_rapida">Entrega Rápida</SelectItem>
+                              <SelectItem value="rota_intermunicipal">Rota Intermunicipal</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            Escolha se este preço é para entrega rápida na cidade ou para rota intermunicipal
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    {/* Seleção de Rota Intermunicipal (apenas se tipo = rota_intermunicipal) */}
+                    {tipoValue === "rota_intermunicipal" && (
                       <FormField
                         control={form.control}
-                        name="serviceLocationId"
+                        name="rotaIntermunicipalId"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Cidade</FormLabel>
+                            <FormLabel>Rota Intermunicipal</FormLabel>
                             <Select onValueChange={field.onChange} value={field.value}>
                               <FormControl>
                                 <SelectTrigger>
-                                  <SelectValue placeholder="Selecione a cidade" />
+                                  <SelectValue placeholder="Selecione a rota" />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
-                                {cities.map((city) => (
-                                  <SelectItem key={city.id} value={city.id}>
-                                    {city.name}
+                                {rotas.map((rota) => (
+                                  <SelectItem key={rota.id} value={rota.id}>
+                                    {rota.nomeRota}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
@@ -296,6 +367,37 @@ export default function Precos() {
                           </FormItem>
                         )}
                       />
+                    )}
+
+                    {/* Seleção de Cidade e Categoria */}
+                    <div className={tipoValue === "entrega_rapida" ? "grid grid-cols-2 gap-4" : ""}>
+                      {/* Mostrar campo Cidade apenas para entrega_rapida */}
+                      {tipoValue === "entrega_rapida" && (
+                        <FormField
+                          control={form.control}
+                          name="serviceLocationId"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Cidade</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Selecione a cidade" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {cities.map((city) => (
+                                    <SelectItem key={city.id} value={city.id}>
+                                      {city.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
 
                       <FormField
                         control={form.control}
@@ -501,7 +603,8 @@ export default function Precos() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Cidade</TableHead>
+                <TableHead>Tipo</TableHead>
+                <TableHead>Cidade/Rota</TableHead>
                 <TableHead>Categoria</TableHead>
                 <TableHead>Tarifa Base</TableHead>
                 <TableHead>Por KM</TableHead>
@@ -513,14 +616,23 @@ export default function Precos() {
             <TableBody>
               {precos.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-10">
+                  <TableCell colSpan={8} className="text-center py-10">
                     Nenhuma configuração de preço cadastrada
                   </TableCell>
                 </TableRow>
               ) : (
                 precos.map((preco) => (
                   <TableRow key={preco.id}>
-                    <TableCell className="font-medium">{preco.serviceLocationName || '-'}</TableCell>
+                    <TableCell>
+                      <Badge variant={preco.tipo === "rota_intermunicipal" ? "outline" : "secondary"}>
+                        {preco.tipo === "rota_intermunicipal" ? "Rota Intermunicipal" : "Entrega Rápida"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {preco.tipo === "rota_intermunicipal"
+                        ? preco.rotaIntermunicipalNome || '-'
+                        : preco.serviceLocationName || '-'}
+                    </TableCell>
                     <TableCell>{preco.vehicleTypeName || '-'}</TableCell>
                     <TableCell>R$ {preco.basePrice}</TableCell>
                     <TableCell>R$ {preco.pricePerDistance}</TableCell>

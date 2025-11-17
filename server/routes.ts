@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { storage } from "./storage";
-import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings, driverCompanyRatings, deliveryStops, faqs, insertFaqSchema, pushNotifications, referralSettings, driverReferrals, ticketSubjects, insertTicketSubjectSchema, supportTickets, insertSupportTicketSchema, ticketReplies, insertTicketReplySchema } from "@shared/schema";
+import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings, driverCompanyRatings, deliveryStops, faqs, insertFaqSchema, pushNotifications, referralSettings, driverReferrals, ticketSubjects, insertTicketSubjectSchema, supportTickets, insertSupportTicketSchema, ticketReplies, insertTicketReplySchema, entregadorRotas } from "@shared/schema";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { pool, db } from "./db";
@@ -2081,17 +2081,39 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
 
       console.log("📝 Dados recebidos para criar preço:", req.body);
 
-      // Verificar se já existe um preço para essa combinação cidade + categoria
-      const existing = await storage.getCityPriceByLocationAndVehicle(
-        req.body.serviceLocationId,
-        req.body.vehicleTypeId
-      );
+      // Verificação de duplicados depende do tipo
+      if (req.body.tipo === "entrega_rapida") {
+        // Para entrega rápida: verificar combinação cidade + categoria
+        if (req.body.serviceLocationId && req.body.vehicleTypeId) {
+          const existing = await storage.getCityPriceByLocationAndVehicle(
+            req.body.serviceLocationId,
+            req.body.vehicleTypeId
+          );
 
-      if (existing) {
-        console.log("⚠️ Preço já existe para esta combinação");
-        return res.status(400).json({
-          message: "Já existe uma configuração de preço para esta cidade e categoria"
-        });
+          if (existing) {
+            console.log("⚠️ Preço já existe para esta combinação");
+            return res.status(400).json({
+              message: "Já existe uma configuração de preço para esta cidade e categoria"
+            });
+          }
+        }
+      } else if (req.body.tipo === "rota_intermunicipal") {
+        // Para rota intermunicipal: verificar combinação rota + categoria
+        if (req.body.rotaIntermunicipalId && req.body.vehicleTypeId) {
+          const allPrices = await storage.getAllCityPrices();
+          const existing = allPrices.find(p =>
+            p.tipo === "rota_intermunicipal" &&
+            p.rotaIntermunicipalId === req.body.rotaIntermunicipalId &&
+            p.vehicleTypeId === req.body.vehicleTypeId
+          );
+
+          if (existing) {
+            console.log("⚠️ Preço já existe para esta rota e categoria");
+            return res.status(400).json({
+              message: "Já existe uma configuração de preço para esta rota e categoria"
+            });
+          }
+        }
       }
 
       console.log("✅ Criando novo preço...");
@@ -2142,6 +2164,1617 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
     } catch (error) {
       console.error("Erro ao excluir preço:", error);
       return res.status(500).json({ message: "Erro ao excluir preço" });
+    }
+  });
+
+  // ========================================
+  // ROTAS INTERMUNICIPAIS ROUTES
+  // ========================================
+
+  // GET /api/rotas-intermunicipais - Listar rotas
+  app.get("/api/rotas-intermunicipais", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const rotas = await storage.getAllRotasIntermunicipais();
+      return res.json(rotas);
+    } catch (error) {
+      console.error("Erro ao listar rotas intermunicipais:", error);
+      return res.status(500).json({ message: "Erro ao buscar rotas" });
+    }
+  });
+
+  // POST /api/rotas-intermunicipais - Criar nova rota
+  app.post("/api/rotas-intermunicipais", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      console.log("📝 Dados recebidos para criar rota:", req.body);
+
+      // Validar que origem e destino são diferentes
+      if (req.body.cidadeOrigemId === req.body.cidadeDestinoId) {
+        return res.status(400).json({
+          message: "Cidade de origem e destino devem ser diferentes"
+        });
+      }
+
+      console.log("✅ Criando nova rota...");
+      const rota = await storage.createRotaIntermunicipal(req.body);
+      console.log("✅ Rota criada com sucesso:", rota);
+      return res.status(201).json(rota);
+    } catch (error: any) {
+      console.error("❌ Erro ao criar rota:", error);
+      console.error("❌ Detalhes do erro:", error.message);
+      return res.status(500).json({ message: "Erro ao criar rota: " + error.message });
+    }
+  });
+
+  // PUT /api/rotas-intermunicipais/:id - Atualizar rota
+  app.put("/api/rotas-intermunicipais/:id", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      // Validar que origem e destino são diferentes (se ambos foram fornecidos)
+      if (req.body.cidadeOrigemId && req.body.cidadeDestinoId &&
+          req.body.cidadeOrigemId === req.body.cidadeDestinoId) {
+        return res.status(400).json({
+          message: "Cidade de origem e destino devem ser diferentes"
+        });
+      }
+
+      const rota = await storage.updateRotaIntermunicipal(id, req.body);
+
+      if (!rota) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+
+      return res.json(rota);
+    } catch (error) {
+      console.error("Erro ao atualizar rota:", error);
+      return res.status(500).json({ message: "Erro ao atualizar rota" });
+    }
+  });
+
+  // DELETE /api/rotas-intermunicipais/:id - Excluir rota
+  app.delete("/api/rotas-intermunicipais/:id", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      await storage.deleteRotaIntermunicipal(id);
+
+      return res.json({ message: "Rota excluída com sucesso" });
+    } catch (error) {
+      console.error("Erro ao excluir rota:", error);
+      return res.status(500).json({ message: "Erro ao excluir rota" });
+    }
+  });
+
+  // ========================================
+  // ENTREGAS INTERMUNICIPAIS ROUTES
+  // ========================================
+
+  // GET /api/entregas-intermunicipais - Listar entregas (empresas veem apenas suas entregas)
+  app.get("/api/entregas-intermunicipais", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      // Se for admin, retorna todas as entregas
+      if (req.session.isAdmin) {
+        const entregas = await storage.getAllEntregasIntermunicipais();
+        return res.json(entregas);
+      }
+
+      // Se for empresa, retorna apenas as entregas dela
+      const company = await storage.getCompanyByUserId(req.session.userId);
+      if (!company) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const entregas = await storage.getEntregasIntermunicipasByEmpresa(company.id);
+      return res.json(entregas);
+    } catch (error) {
+      console.error("Erro ao listar entregas intermunicipais:", error);
+      return res.status(500).json({ message: "Erro ao buscar entregas" });
+    }
+  });
+
+  // GET /api/entregas-intermunicipais/:id - Buscar entrega por ID
+  app.get("/api/entregas-intermunicipais/:id", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const entrega = await storage.getEntregaIntermunicipal(id);
+
+      if (!entrega) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar se o usuário tem permissão para ver esta entrega
+      if (!req.session.isAdmin) {
+        const company = await storage.getCompanyByUserId(req.session.userId);
+        if (!company || entrega.empresaId !== company.id) {
+          return res.status(403).json({ message: "Acesso negado" });
+        }
+      }
+
+      return res.json(entrega);
+    } catch (error) {
+      console.error("Erro ao buscar entrega:", error);
+      return res.status(500).json({ message: "Erro ao buscar entrega" });
+    }
+  });
+
+  // POST /api/entregas-intermunicipais - Criar nova entrega (apenas empresas)
+  app.post("/api/entregas-intermunicipais", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const company = await storage.getCompanyByUserId(req.session.userId);
+      if (!company) {
+        return res.status(403).json({ message: "Apenas empresas podem agendar entregas" });
+      }
+
+      console.log("📦 Dados recebidos para criar entrega:", req.body);
+
+      // Buscar informações da rota
+      const rota = await storage.getRotaIntermunicipal(req.body.rotaId);
+      if (!rota) {
+        return res.status(400).json({ message: "Rota não encontrada" });
+      }
+
+      // Buscar preço configurado para esta rota
+      const preco = await storage.getCityPrice(req.body.precoId);
+      if (!preco) {
+        return res.status(400).json({ message: "Configuração de preço não encontrada" });
+      }
+
+      // Verificar se o preço é para rota intermunicipal
+      if (preco.tipo !== "rota_intermunicipal" || preco.rotaIntermunicipalId !== req.body.rotaId) {
+        return res.status(400).json({ message: "Preço inválido para esta rota" });
+      }
+
+      // Calcular valor total
+      const distanciaKm = parseFloat(rota.distanciaKm);
+      const tarifaBase = parseFloat(preco.basePrice);
+      const precoPorKm = parseFloat(preco.pricePerDistance);
+      const valorParada = parseFloat(preco.stopPrice) || 0;
+
+      const valorTotal = tarifaBase + (precoPorKm * distanciaKm) + valorParada;
+
+      // Gerar número de pedido único
+      const numeroPedido = `INT-${Date.now()}-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+
+      // Criar entrega com valores calculados
+      const entregaData = {
+        ...req.body,
+        empresaId: company.id,
+        numeroPedido,
+        tarifaBase: tarifaBase.toFixed(2),
+        precoPorKm: precoPorKm.toFixed(2),
+        distanciaKm: distanciaKm.toFixed(2),
+        valorParada: valorParada.toFixed(2),
+        valorTotal: valorTotal.toFixed(2),
+        status: "aguardando_motorista",
+      };
+
+      console.log("✅ Criando nova entrega...");
+      const entrega = await storage.createEntregaIntermunicipal(entregaData);
+      console.log("✅ Entrega criada com sucesso:", entrega);
+
+      // ===== NOTIFICAÇÃO: Enviar para motoristas que configuraram esta rota =====
+      try {
+        // Buscar motoristas que configuraram capacidade para esta rota e data
+        const motoristasDisponiveis = await storage.getMotoristasComRotaConfigurada(
+          req.body.rotaId,
+          req.body.dataAgendada
+        );
+
+        if (motoristasDisponiveis && motoristasDisponiveis.length > 0) {
+          const fcmTokens = motoristasDisponiveis
+            .filter(m => m.fcmToken && m.fcmToken.trim() !== '')
+            .map(m => m.fcmToken!);
+
+          if (fcmTokens.length > 0) {
+            console.log(`📤 Enviando notificação para ${fcmTokens.length} motorista(s) disponível(is)...`);
+
+            await sendPushToMultipleDevices(
+              fcmTokens,
+              "🚚 Nova Entrega Intermunicipal Disponível!",
+              `${rota.nomeRota} • ${req.body.quantidadePacotes} pacote(s) • Agendado para ${new Date(req.body.dataAgendada).toLocaleDateString('pt-BR')}`,
+              {
+                type: "nova_entrega_intermunicipal",
+                entregaId: entrega.id,
+                rotaId: req.body.rotaId,
+                rotaNome: rota.nomeRota,
+                dataAgendada: req.body.dataAgendada,
+                quantidadePacotes: req.body.quantidadePacotes.toString(),
+                pesoKg: req.body.pesoTotalKg || "0",
+                empresaNome: company.name || "Empresa",
+                enderecoColeta: req.body.enderecoColetaCompleto,
+                enderecoEntrega: req.body.enderecoEntregaCompleto,
+              }
+            );
+
+            console.log(`✅ Notificações enviadas para motoristas com rota configurada`);
+          } else {
+            console.log("⚠️ Nenhum motorista tem FCM token registrado");
+          }
+        } else {
+          console.log("ℹ️ Nenhum motorista configurou capacidade para esta rota e data ainda");
+        }
+      } catch (notifError) {
+        console.error("❌ Erro ao enviar notificação para motoristas:", notifError);
+        // Não falhar a criação da entrega por erro de notificação
+      }
+
+      return res.status(201).json(entrega);
+    } catch (error: any) {
+      console.error("❌ Erro ao criar entrega:", error);
+      return res.status(500).json({ message: "Erro ao criar entrega: " + error.message });
+    }
+  });
+
+  // PUT /api/entregas-intermunicipais/:id - Atualizar entrega
+  app.put("/api/entregas-intermunicipais/:id", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const entrega = await storage.getEntregaIntermunicipal(id);
+
+      if (!entrega) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar permissão
+      if (!req.session.isAdmin) {
+        const company = await storage.getCompanyByUserId(req.session.userId);
+        if (!company || entrega.empresaId !== company.id) {
+          return res.status(403).json({ message: "Acesso negado" });
+        }
+
+        // Empresa só pode atualizar se a entrega ainda não foi aceita por motorista
+        if (entrega.viagemId) {
+          return res.status(400).json({
+            message: "Não é possível alterar entrega que já foi aceita por motorista"
+          });
+        }
+      }
+
+      const entregaAtualizada = await storage.updateEntregaIntermunicipal(id, req.body);
+      return res.json(entregaAtualizada);
+    } catch (error) {
+      console.error("Erro ao atualizar entrega:", error);
+      return res.status(500).json({ message: "Erro ao atualizar entrega" });
+    }
+  });
+
+  // DELETE /api/entregas-intermunicipais/:id - Cancelar entrega
+  app.delete("/api/entregas-intermunicipais/:id", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const entrega = await storage.getEntregaIntermunicipal(id);
+
+      if (!entrega) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar permissão
+      if (!req.session.isAdmin) {
+        const company = await storage.getCompanyByUserId(req.session.userId);
+        if (!company || entrega.empresaId !== company.id) {
+          return res.status(403).json({ message: "Acesso negado" });
+        }
+
+        // Empresa só pode cancelar se a entrega ainda não foi aceita por motorista
+        if (entrega.viagemId) {
+          return res.status(400).json({
+            message: "Não é possível cancelar entrega que já foi aceita por motorista. Entre em contato com o suporte."
+          });
+        }
+      }
+
+      await storage.deleteEntregaIntermunicipal(id);
+      return res.json({ message: "Entrega cancelada com sucesso" });
+    } catch (error) {
+      console.error("Erro ao cancelar entrega:", error);
+      return res.status(500).json({ message: "Erro ao cancelar entrega" });
+    }
+  });
+
+  // ========================================
+  // VIAGENS INTERMUNICIPAIS ROUTES (Para Motoristas)
+  // ========================================
+
+  // GET /api/viagens-intermunicipais - Listar viagens (motoristas veem apenas suas viagens)
+  app.get("/api/viagens-intermunicipais", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      // Se for admin, retorna todas as viagens
+      if (req.session.isAdmin) {
+        const viagens = await storage.getAllViagensIntermunicipais();
+        return res.json(viagens);
+      }
+
+      // Se for motorista, retorna apenas as viagens dele
+      const driver = await storage.getDriverByUserId(req.session.userId);
+      if (!driver) {
+        return res.status(403).json({ message: "Apenas motoristas podem acessar viagens" });
+      }
+
+      const viagens = await storage.getViagensIntermunicipasByEntregador(driver.id);
+      return res.json(viagens);
+    } catch (error) {
+      console.error("Erro ao listar viagens:", error);
+      return res.status(500).json({ message: "Erro ao buscar viagens" });
+    }
+  });
+
+  // GET /api/viagens-intermunicipais/disponiveis - Listar entregas disponíveis para aceitar
+  app.get("/api/viagens-intermunicipais/disponiveis", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const driver = await storage.getDriverByUserId(req.session.userId);
+      if (!driver) {
+        return res.status(403).json({ message: "Apenas motoristas podem acessar" });
+      }
+
+      const { rotaId, dataAgendada } = req.query;
+
+      if (!rotaId || !dataAgendada) {
+        return res.status(400).json({ message: "Rota e data são obrigatórios" });
+      }
+
+      // Buscar entregas disponíveis para esta rota e data
+      const entregasDisponiveis = await storage.getEntregasIntermunicipasByRota(
+        rotaId as string,
+        dataAgendada as string
+      );
+
+      // Filtrar apenas entregas aguardando motorista
+      const entregas = entregasDisponiveis.filter(e => e.status === "aguardando_motorista");
+
+      return res.json(entregas);
+    } catch (error) {
+      console.error("Erro ao listar entregas disponíveis:", error);
+      return res.status(500).json({ message: "Erro ao buscar entregas disponíveis" });
+    }
+  });
+
+  // POST /api/viagens-intermunicipais/aceitar - Motorista aceita entregas e cria viagem
+  app.post("/api/viagens-intermunicipais/aceitar", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const driver = await storage.getDriverByUserId(req.session.userId);
+      if (!driver) {
+        return res.status(403).json({ message: "Apenas motoristas podem aceitar entregas" });
+      }
+
+      const { rotaId, entregadorRotaId, dataViagem, entregasIds } = req.body;
+
+      console.log("🚗 Motorista aceitando entregas:", {
+        driverId: driver.id,
+        rotaId,
+        entregadorRotaId,
+        dataViagem,
+        entregasIds
+      });
+
+      if (!rotaId || !entregadorRotaId || !dataViagem || !entregasIds || entregasIds.length === 0) {
+        return res.status(400).json({ message: "Dados incompletos" });
+      }
+
+      // Buscar configuração da rota do motorista
+      const [entregadorRota] = await db
+        .select()
+        .from(sql`entregador_rotas`)
+        .where(sql`id = ${entregadorRotaId}`);
+
+      if (!entregadorRota) {
+        return res.status(400).json({ message: "Configuração de rota não encontrada" });
+      }
+
+      // Buscar todas as entregas selecionadas
+      const entregas = await Promise.all(
+        entregasIds.map((id: string) => storage.getEntregaIntermunicipal(id))
+      );
+
+      // Validar todas as entregas
+      for (const entrega of entregas) {
+        if (!entrega) {
+          return res.status(400).json({ message: "Uma ou mais entregas não foram encontradas" });
+        }
+        if (entrega.status !== "aguardando_motorista") {
+          return res.status(400).json({
+            message: `Entrega ${entrega.numeroPedido} já foi aceita por outro motorista`
+          });
+        }
+        if (entrega.rotaId !== rotaId) {
+          return res.status(400).json({ message: "Todas as entregas devem ser da mesma rota" });
+        }
+        if (entrega.dataAgendada !== dataViagem) {
+          return res.status(400).json({ message: "Todas as entregas devem ser para a mesma data" });
+        }
+      }
+
+      // Calcular totais
+      const totalPacotes = entregas.reduce((sum, e) => sum + (e?.quantidadePacotes || 0), 0);
+      const totalPeso = entregas.reduce((sum, e) => sum + parseFloat(e?.pesoTotalKg || "0"), 0);
+
+      // Verificar capacidade
+      if (totalPacotes > entregadorRota.capacidade_pacotes) {
+        return res.status(400).json({
+          message: `Capacidade de pacotes excedida. Máximo: ${entregadorRota.capacidade_pacotes}, Selecionado: ${totalPacotes}`
+        });
+      }
+
+      if (totalPeso > parseFloat(entregadorRota.capacidade_peso_kg)) {
+        return res.status(400).json({
+          message: `Capacidade de peso excedida. Máximo: ${entregadorRota.capacidade_peso_kg}kg, Selecionado: ${totalPeso}kg`
+        });
+      }
+
+      // Verificar se já existe viagem para este motorista, rota e data
+      const viagensExistentes = await storage.getViagensIntermunicipasByRota(rotaId, dataViagem);
+      const viagemExistente = viagensExistentes.find((v: any) => v.entregadorId === driver.id);
+
+      let viagem;
+
+      if (viagemExistente) {
+        // Atualizar viagem existente
+        viagem = viagemExistente;
+        console.log("✅ Usando viagem existente:", viagem.id);
+      } else {
+        // Criar nova viagem
+        const viagemData = {
+          entregadorId: driver.id,
+          rotaId,
+          entregadorRotaId,
+          dataViagem,
+          capacidadePacotesTotal: entregadorRota.capacidade_pacotes,
+          capacidadePesoKgTotal: entregadorRota.capacidade_peso_kg,
+          horarioSaidaPlanejado: entregadorRota.horario_saida,
+          status: "agendada"
+        };
+
+        viagem = await storage.createViagemIntermunicipal(viagemData);
+        console.log("✅ Nova viagem criada:", viagem.id);
+      }
+
+      // Associar entregas à viagem (o trigger criará automaticamente coletas e entregas)
+      for (const entrega of entregas) {
+        if (entrega) {
+          await storage.updateEntregaIntermunicipal(entrega.id, {
+            viagemId: viagem.id
+          });
+          console.log(`✅ Entrega ${entrega.numeroPedido} associada à viagem`);
+        }
+      }
+
+      return res.json({
+        message: "Entregas aceitas com sucesso!",
+        viagem,
+        entregasAceitas: entregas.length
+      });
+    } catch (error: any) {
+      console.error("❌ Erro ao aceitar entregas:", error);
+      return res.status(500).json({ message: "Erro ao aceitar entregas: " + error.message });
+    }
+  });
+
+  // GET /api/viagens-intermunicipais/:id - Buscar viagem específica com detalhes
+  app.get("/api/viagens-intermunicipais/:id", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const viagem = await storage.getViagemIntermunicipal(id);
+
+      if (!viagem) {
+        return res.status(404).json({ message: "Viagem não encontrada" });
+      }
+
+      // Verificar permissão
+      if (!req.session.isAdmin) {
+        const driver = await storage.getDriverByUserId(req.session.userId);
+        if (!driver || viagem.entregadorId !== driver.id) {
+          return res.status(403).json({ message: "Acesso negado" });
+        }
+      }
+
+      // Buscar entregas da viagem
+      const entregas = await db
+        .select()
+        .from(entregasIntermunicipais)
+        .where(eq(entregasIntermunicipais.viagemId, id));
+
+      // Buscar coletas da viagem
+      const [coletas] = await db.execute(sql`
+        SELECT * FROM viagem_coletas
+        WHERE viagem_id = ${id}
+        ORDER BY ordem_coleta
+      `);
+
+      // Buscar entregas individuais
+      const [entregasDetalhadas] = await db.execute(sql`
+        SELECT * FROM viagem_entregas
+        WHERE viagem_id = ${id}
+        ORDER BY ordem_entrega
+      `);
+
+      return res.json({
+        ...viagem,
+        entregas,
+        coletas,
+        entregasDetalhadas
+      });
+    } catch (error) {
+      console.error("Erro ao buscar viagem:", error);
+      return res.status(500).json({ message: "Erro ao buscar viagem" });
+    }
+  });
+
+  // PUT /api/viagens-intermunicipais/:id/status - Atualizar status da viagem
+  app.put("/api/viagens-intermunicipais/:id/status", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const { status } = req.body;
+
+      const viagem = await storage.getViagemIntermunicipal(id);
+      if (!viagem) {
+        return res.status(404).json({ message: "Viagem não encontrada" });
+      }
+
+      // Verificar permissão
+      const driver = await storage.getDriverByUserId(req.session.userId);
+      if (!driver || viagem.entregadorId !== driver.id) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const statusPermitidos = ["agendada", "em_coleta", "em_transito", "em_entrega", "concluida", "cancelada"];
+      if (!statusPermitidos.includes(status)) {
+        return res.status(400).json({ message: "Status inválido" });
+      }
+
+      const viagemAtualizada = await storage.updateViagemIntermunicipal(id, { status });
+      return res.json(viagemAtualizada);
+    } catch (error) {
+      console.error("Erro ao atualizar status da viagem:", error);
+      return res.status(500).json({ message: "Erro ao atualizar status" });
+    }
+  });
+
+  // PUT /api/viagem-coletas/:id/status - Atualizar status de uma coleta
+  app.put("/api/viagem-coletas/:id/status", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const { status, latitude, longitude, observacoes, motivoFalha, fotoComprovanteUrl } = req.body;
+
+      const driver = await storage.getDriverByUserId(req.session.userId);
+      if (!driver) {
+        return res.status(403).json({ message: "Apenas motoristas podem atualizar coletas" });
+      }
+
+      const statusPermitidos = ["pendente", "a_caminho", "chegou", "coletado", "falhou"];
+      if (!statusPermitidos.includes(status)) {
+        return res.status(400).json({ message: "Status inválido" });
+      }
+
+      const updateData: any = { status };
+
+      // Adicionar timestamp baseado no status
+      if (status === "chegou") {
+        updateData.horarioChegada = new Date();
+      } else if (status === "coletado" || status === "falhou") {
+        updateData.horarioColeta = new Date();
+      }
+
+      // Adicionar campos opcionais
+      if (latitude) updateData.latitude = latitude;
+      if (longitude) updateData.longitude = longitude;
+      if (observacoes) updateData.observacoes = observacoes;
+      if (motivoFalha) updateData.motivoFalha = motivoFalha;
+      if (fotoComprovanteUrl) updateData.fotoComprovanteUrl = fotoComprovanteUrl;
+
+      await db.execute(sql`
+        UPDATE viagem_coletas
+        SET ${sql.raw(Object.keys(updateData).map(key => `${key} = $${key}`).join(', '))},
+            updated_at = NOW()
+        WHERE id = ${id}
+      `);
+
+      return res.json({ message: "Status da coleta atualizado com sucesso" });
+    } catch (error) {
+      console.error("Erro ao atualizar status da coleta:", error);
+      return res.status(500).json({ message: "Erro ao atualizar status da coleta" });
+    }
+  });
+
+  // PUT /api/viagem-entregas/:id/status - Atualizar status de uma entrega
+  app.put("/api/viagem-entregas/:id/status", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const {
+        status,
+        latitude,
+        longitude,
+        nomeRecebedor,
+        cpfRecebedor,
+        observacoes,
+        motivoFalha,
+        fotoComprovanteUrl,
+        assinaturaUrl,
+        avaliacaoEstrelas,
+        avaliacaoComentario
+      } = req.body;
+
+      const driver = await storage.getDriverByUserId(req.session.userId);
+      if (!driver) {
+        return res.status(403).json({ message: "Apenas motoristas podem atualizar entregas" });
+      }
+
+      const statusPermitidos = ["pendente", "a_caminho", "chegou", "entregue", "recusado", "ausente", "devolvido"];
+      if (!statusPermitidos.includes(status)) {
+        return res.status(400).json({ message: "Status inválido" });
+      }
+
+      const updateData: any = { status };
+
+      // Adicionar timestamp baseado no status
+      if (status === "chegou") {
+        updateData.horarioChegada = new Date();
+      } else if (["entregue", "recusado", "ausente", "devolvido"].includes(status)) {
+        updateData.horarioEntrega = new Date();
+      }
+
+      // Adicionar campos opcionais
+      if (latitude) updateData.latitude = latitude;
+      if (longitude) updateData.longitude = longitude;
+      if (nomeRecebedor) updateData.nomeRecebedor = nomeRecebedor;
+      if (cpfRecebedor) updateData.cpfRecebedor = cpfRecebedor;
+      if (observacoes) updateData.observacoes = observacoes;
+      if (motivoFalha) updateData.motivoFalha = motivoFalha;
+      if (fotoComprovanteUrl) updateData.fotoComprovanteUrl = fotoComprovanteUrl;
+      if (assinaturaUrl) updateData.assinaturaUrl = assinaturaUrl;
+      if (avaliacaoEstrelas) updateData.avaliacaoEstrelas = avaliacaoEstrelas;
+      if (avaliacaoComentario) updateData.avaliacaoComentario = avaliacaoComentario;
+
+      await db.execute(sql`
+        UPDATE viagem_entregas
+        SET ${sql.raw(Object.keys(updateData).map(key => `${key} = $${key}`).join(', '))},
+            updated_at = NOW()
+        WHERE id = ${id}
+      `);
+
+      return res.json({ message: "Status da entrega atualizado com sucesso" });
+    } catch (error) {
+      console.error("Erro ao atualizar status da entrega:", error);
+      return res.status(500).json({ message: "Erro ao atualizar status da entrega" });
+    }
+  });
+
+  // ========================================
+  // ADMIN - VIAGENS INTERMUNICIPAIS ROUTES
+  // ========================================
+
+  // GET /api/admin/viagens-intermunicipais - Listar todas as viagens
+  app.get("/api/admin/viagens-intermunicipais", async (req, res) => {
+    try {
+      if (!req.session.userId || !req.session.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const viagens = await storage.getAllViagensIntermunicipais();
+      return res.json(viagens);
+    } catch (error) {
+      console.error("Erro ao buscar viagens:", error);
+      return res.status(500).json({ message: "Erro ao buscar viagens" });
+    }
+  });
+
+  // GET /api/admin/viagens-intermunicipais/:id - Detalhes de uma viagem
+  app.get("/api/admin/viagens-intermunicipais/:id", async (req, res) => {
+    try {
+      if (!req.session.userId || !req.session.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const { id } = req.params;
+      const viagem = await storage.getViagemIntermunicipal(id);
+
+      if (!viagem) {
+        return res.status(404).json({ message: "Viagem não encontrada" });
+      }
+
+      return res.json(viagem);
+    } catch (error) {
+      console.error("Erro ao buscar viagem:", error);
+      return res.status(500).json({ message: "Erro ao buscar viagem" });
+    }
+  });
+
+  // GET /api/admin/viagens-intermunicipais/:id/coletas - Coletas de uma viagem
+  app.get("/api/admin/viagens-intermunicipais/:id/coletas", async (req, res) => {
+    try {
+      if (!req.session.userId || !req.session.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const { id } = req.params;
+      const coletas = await storage.getViagemColetas(id);
+      return res.json(coletas);
+    } catch (error) {
+      console.error("Erro ao buscar coletas:", error);
+      return res.status(500).json({ message: "Erro ao buscar coletas" });
+    }
+  });
+
+  // GET /api/admin/viagens-intermunicipais/:id/entregas - Entregas de uma viagem
+  app.get("/api/admin/viagens-intermunicipais/:id/entregas", async (req, res) => {
+    try {
+      if (!req.session.userId || !req.session.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const { id } = req.params;
+      const entregas = await storage.getViagemEntregas(id);
+      return res.json(entregas);
+    } catch (error) {
+      console.error("Erro ao buscar entregas da viagem:", error);
+      return res.status(500).json({ message: "Erro ao buscar entregas da viagem" });
+    }
+  });
+
+  // ========================================
+  // ADMIN - ENTREGADOR ROTAS (Configurações de rotas dos motoristas)
+  // ========================================
+
+  // GET /api/admin/entregador-rotas - Listar todas as configurações de rotas dos motoristas
+  app.get("/api/admin/entregador-rotas", async (req, res) => {
+    try {
+      if (!req.session.userId || !req.session.isAdmin) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const rotas = await storage.getAllEntregadorRotas();
+      return res.json(rotas);
+    } catch (error) {
+      console.error("Erro ao buscar configurações de rotas:", error);
+      return res.status(500).json({ message: "Erro ao buscar configurações de rotas" });
+    }
+  });
+
+  // ========================================
+  // ENTREGADOR (MOBILE APP) - ROTAS ROUTES
+  // ========================================
+
+  // GET /api/entregador/rotas-disponiveis - Listar rotas que o motorista pode configurar
+  app.get("/api/entregador/rotas-disponiveis", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const rotas = await storage.getAllRotasIntermunicipais();
+      return res.json(rotas);
+    } catch (error) {
+      console.error("Erro ao buscar rotas disponíveis:", error);
+      return res.status(500).json({ message: "Erro ao buscar rotas disponíveis" });
+    }
+  });
+
+  // GET /api/entregador/minhas-rotas - Listar rotas configuradas pelo motorista
+  app.get("/api/entregador/minhas-rotas", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const rotas = await storage.getEntregadorRotasByEntregador(req.session.driverId);
+      return res.json(rotas);
+    } catch (error) {
+      console.error("Erro ao buscar minhas rotas:", error);
+      return res.status(500).json({ message: "Erro ao buscar minhas rotas" });
+    }
+  });
+
+  // POST /api/entregador/rotas - Configurar capacidade para uma rota
+  app.post("/api/entregador/rotas", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const data = {
+        ...req.body,
+        entregadorId: req.session.driverId,
+      };
+
+      const rota = await storage.createEntregadorRota(data);
+      return res.status(201).json(rota);
+    } catch (error: any) {
+      console.error("Erro ao configurar rota:", error);
+      return res.status(500).json({ message: "Erro ao configurar rota: " + error.message });
+    }
+  });
+
+  // PUT /api/entregador/rotas/:id - Atualizar capacidade da rota
+  app.put("/api/entregador/rotas/:id", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      // Verificar se a rota pertence ao motorista
+      const rotaExistente = await storage.getEntregadorRota(id);
+      if (!rotaExistente || rotaExistente.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const rota = await storage.updateEntregadorRota(id, req.body);
+
+      if (!rota) {
+        return res.status(404).json({ message: "Rota não encontrada" });
+      }
+
+      return res.json(rota);
+    } catch (error) {
+      console.error("Erro ao atualizar rota:", error);
+      return res.status(500).json({ message: "Erro ao atualizar rota" });
+    }
+  });
+
+  // DELETE /api/entregador/rotas/:id - Remover configuração de rota
+  app.delete("/api/entregador/rotas/:id", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      // Verificar se a rota pertence ao motorista
+      const rotaExistente = await storage.getEntregadorRota(id);
+      if (!rotaExistente || rotaExistente.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      await storage.deleteEntregadorRota(id);
+      return res.json({ message: "Rota removida com sucesso" });
+    } catch (error) {
+      console.error("Erro ao remover rota:", error);
+      return res.status(500).json({ message: "Erro ao remover rota" });
+    }
+  });
+
+  // ========================================
+  // ENTREGADOR (MOBILE APP) - ENTREGAS DISPONÍVEIS ROUTES
+  // ========================================
+
+  // GET /api/entregador/entregas-disponiveis - Listar entregas disponíveis nas rotas do motorista
+  app.get("/api/entregador/entregas-disponiveis", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { dataViagem } = req.query;
+
+      if (!dataViagem || typeof dataViagem !== "string") {
+        return res.status(400).json({ message: "Data da viagem é obrigatória" });
+      }
+
+      const entregas = await storage.getEntregasDisponiveisParaEntregador(
+        req.session.driverId,
+        dataViagem
+      );
+
+      return res.json(entregas);
+    } catch (error) {
+      console.error("Erro ao buscar entregas disponíveis:", error);
+      return res.status(500).json({ message: "Erro ao buscar entregas disponíveis" });
+    }
+  });
+
+  // POST /api/entregador/entregas/:id/aceitar - Aceitar entrega
+  app.post("/api/entregador/entregas/:id/aceitar", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      // Buscar a entrega
+      const entrega = await storage.getEntregaIntermunicipal(id);
+      if (!entrega) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar se a entrega está aguardando motorista
+      if (entrega.status !== "aguardando_motorista") {
+        return res.status(400).json({ message: "Esta entrega não está mais disponível" });
+      }
+
+      // Verificar se o motorista tem essa rota configurada
+      const rotasDoMotorista = await storage.getEntregadorRotasByEntregador(req.session.driverId);
+      const temRota = rotasDoMotorista.some((r) => r.rotaId === entrega.rotaId && r.ativo);
+
+      if (!temRota) {
+        return res.status(403).json({ message: "Você não tem essa rota configurada" });
+      }
+
+      // Buscar configuração da rota do motorista
+      const [rotaConfig] = rotasDoMotorista.filter((r) => r.rotaId === entrega.rotaId);
+
+      // Verificar se já existe uma viagem para essa data/rota ou criar uma nova
+      let viagens = await storage.getViagensIntermunicipasByRota(
+        entrega.rotaId,
+        entrega.dataAgendada.toString().split('T')[0]
+      );
+
+      // Filtrar viagens do motorista logado
+      viagens = viagens.filter((v) => v.entregadorId === req.session.driverId);
+
+      let viagem;
+      if (viagens.length === 0) {
+        // Criar nova viagem
+        const rotaEntregador = await db
+          .select()
+          .from(entregadorRotas)
+          .where(
+            and(
+              eq(entregadorRotas.entregadorId, req.session.driverId),
+              eq(entregadorRotas.rotaId, entrega.rotaId)
+            )
+          )
+          .limit(1);
+
+        if (rotaEntregador.length === 0) {
+          return res.status(400).json({ message: "Configuração de rota não encontrada" });
+        }
+
+        const viagemData = {
+          entregadorId: req.session.driverId,
+          rotaId: entrega.rotaId,
+          entregadorRotaId: rotaEntregador[0].id,
+          dataViagem: entrega.dataAgendada.toString().split('T')[0],
+          status: "agendada",
+          capacidadePacotesTotal: rotaConfig.capacidadePacotes,
+          capacidadePesoKgTotal: rotaConfig.capacidadePesoKg.toString(),
+          pacotesAceitos: 0,
+          pesoAceitoKg: "0",
+          horarioSaidaPlanejado: rotaConfig.horarioSaidaPadrao,
+        };
+
+        viagem = await storage.createViagemIntermunicipal(viagemData);
+      } else {
+        viagem = viagens[0];
+      }
+
+      // Verificar capacidade disponível
+      const capacidadeDisponivel = viagem.capacidadePacotesTotal - (viagem.pacotesAceitos || 0);
+      const pesoDisponivel = parseFloat(viagem.capacidadePesoKgTotal) - parseFloat(viagem.pesoAceitoKg || "0");
+
+      if (entrega.quantidadePacotes > capacidadeDisponivel) {
+        return res.status(400).json({
+          message: `Capacidade insuficiente. Disponível: ${capacidadeDisponivel} pacotes`
+        });
+      }
+
+      if (parseFloat(entrega.pesoTotalKg) > pesoDisponivel) {
+        return res.status(400).json({
+          message: `Peso excede capacidade. Disponível: ${pesoDisponivel.toFixed(2)} kg`
+        });
+      }
+
+      // Atualizar entrega vinculando à viagem (o trigger vai atualizar capacidade e status automaticamente)
+      await storage.updateEntregaIntermunicipal(id, {
+        viagemId: viagem.id,
+      });
+
+      // ===== NOTIFICAÇÃO: Avisar empresa que motorista aceitou a entrega =====
+      try {
+        const motorista = await storage.getDriver(req.session.driverId);
+        const empresa = await storage.getCompany(entrega.empresaId);
+
+        if (empresa && motorista) {
+          // Buscar usuário da empresa para pegar FCM token
+          const empresaUser = await storage.getUserByMobile(empresa.mobile);
+
+          if (empresaUser && empresaUser.fcmToken) {
+            console.log(`📤 Enviando notificação para empresa ${empresa.name}...`);
+
+            await sendPushNotification(
+              empresaUser.fcmToken,
+              "✅ Entrega Aceita!",
+              `${motorista.name} aceitou sua entrega ${entrega.numeroPedido}`,
+              {
+                type: "entrega_aceita",
+                entregaId: entrega.id,
+                numeroPedido: entrega.numeroPedido,
+                motoristaNome: motorista.name || "Motorista",
+                motoristaId: motorista.id,
+                viagemId: viagem.id,
+              }
+            );
+
+            console.log(`✅ Notificação enviada para empresa`);
+          }
+        }
+      } catch (notifError) {
+        console.error("❌ Erro ao enviar notificação para empresa:", notifError);
+        // Não falhar a aceitação por erro de notificação
+      }
+
+      return res.json({
+        message: "Entrega aceita com sucesso",
+        viagemId: viagem.id
+      });
+    } catch (error: any) {
+      console.error("Erro ao aceitar entrega:", error);
+      return res.status(500).json({ message: "Erro ao aceitar entrega: " + error.message });
+    }
+  });
+
+  // POST /api/entregador/entregas/:id/rejeitar - Rejeitar entrega
+  app.post("/api/entregador/entregas/:id/rejeitar", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const { motivo } = req.body;
+
+      // Apenas registra a rejeição (pode ser usado para métricas)
+      console.log(`Motorista ${req.session.driverId} rejeitou entrega ${id}. Motivo: ${motivo || 'Não informado'}`);
+
+      return res.json({ message: "Entrega rejeitada" });
+    } catch (error) {
+      console.error("Erro ao rejeitar entrega:", error);
+      return res.status(500).json({ message: "Erro ao rejeitar entrega" });
+    }
+  });
+
+  // ========================================
+  // ENTREGADOR (MOBILE APP) - VIAGENS ROUTES
+  // ========================================
+
+  // GET /api/entregador/viagens - Listar viagens do motorista
+  app.get("/api/entregador/viagens", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const viagens = await storage.getViagensIntermunicipasByEntregador(req.session.driverId);
+      return res.json(viagens);
+    } catch (error) {
+      console.error("Erro ao buscar viagens:", error);
+      return res.status(500).json({ message: "Erro ao buscar viagens" });
+    }
+  });
+
+  // GET /api/entregador/viagens/:id - Detalhes da viagem
+  app.get("/api/entregador/viagens/:id", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const viagem = await storage.getViagemIntermunicipal(id);
+
+      if (!viagem) {
+        return res.status(404).json({ message: "Viagem não encontrada" });
+      }
+
+      // Verificar se a viagem pertence ao motorista
+      if (viagem.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      return res.json(viagem);
+    } catch (error) {
+      console.error("Erro ao buscar viagem:", error);
+      return res.status(500).json({ message: "Erro ao buscar viagem" });
+    }
+  });
+
+  // POST /api/entregador/viagens/:id/iniciar - Iniciar viagem
+  app.post("/api/entregador/viagens/:id/iniciar", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const viagem = await storage.getViagemIntermunicipal(id);
+
+      if (!viagem) {
+        return res.status(404).json({ message: "Viagem não encontrada" });
+      }
+
+      if (viagem.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      if (viagem.status !== "agendada") {
+        return res.status(400).json({ message: "Viagem já foi iniciada ou concluída" });
+      }
+
+      await storage.updateViagemIntermunicipal(id, {
+        status: "em_coleta",
+        horarioSaidaReal: new Date(),
+      });
+
+      return res.json({ message: "Viagem iniciada com sucesso" });
+    } catch (error) {
+      console.error("Erro ao iniciar viagem:", error);
+      return res.status(500).json({ message: "Erro ao iniciar viagem" });
+    }
+  });
+
+  // ========================================
+  // ENTREGADOR (MOBILE APP) - COLETAS ROUTES
+  // ========================================
+
+  // GET /api/entregador/viagens/:viagemId/coletas - Listar coletas da viagem
+  app.get("/api/entregador/viagens/:viagemId/coletas", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { viagemId } = req.params;
+
+      // Verificar se a viagem pertence ao motorista
+      const viagem = await storage.getViagemIntermunicipal(viagemId);
+      if (!viagem || viagem.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const coletas = await storage.getViagemColetas(viagemId);
+      return res.json(coletas);
+    } catch (error) {
+      console.error("Erro ao buscar coletas:", error);
+      return res.status(500).json({ message: "Erro ao buscar coletas" });
+    }
+  });
+
+  // PUT /api/entregador/coletas/:id/status - Atualizar status da coleta
+  app.put("/api/entregador/coletas/:id/status", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const { status, motivoFalha, observacoes } = req.body;
+
+      const coleta = await storage.getViagemColeta(id);
+      if (!coleta) {
+        return res.status(404).json({ message: "Coleta não encontrada" });
+      }
+
+      // Verificar se a viagem pertence ao motorista
+      const viagem = await storage.getViagemIntermunicipal(coleta.viagemId);
+      if (!viagem || viagem.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const updateData: any = { status };
+
+      if (status === "coletado") {
+        updateData.horarioColeta = new Date();
+      } else if (status === "falha") {
+        updateData.motivoFalha = motivoFalha;
+      }
+
+      if (observacoes) {
+        updateData.observacoes = observacoes;
+      }
+
+      await storage.updateViagemColeta(id, updateData);
+
+      // ===== NOTIFICAÇÃO: Avisar empresa quando motorista chega para retirar =====
+      if (status === "chegou") {
+        try {
+          const motorista = await storage.getDriver(req.session.driverId);
+
+          // Buscar entrega relacionada a esta coleta para pegar empresa
+          const entrega = await storage.getEntregaIntermunicipal(coleta.entregaId);
+
+          if (entrega && motorista) {
+            const empresa = await storage.getCompany(entrega.empresaId);
+
+            if (empresa) {
+              const empresaUser = await storage.getUserByMobile(empresa.mobile);
+
+              if (empresaUser && empresaUser.fcmToken) {
+                console.log(`📤 Enviando notificação de chegada para empresa ${empresa.name}...`);
+
+                await sendPushNotification(
+                  empresaUser.fcmToken,
+                  "🚚 Motorista Chegou para Retirada!",
+                  `${motorista.name} chegou para retirar a entrega ${entrega.numeroPedido}`,
+                  {
+                    type: "motorista_chegou_coleta",
+                    entregaId: entrega.id,
+                    numeroPedido: entrega.numeroPedido,
+                    motoristaNome: motorista.name || "Motorista",
+                    motoristaId: motorista.id,
+                    coletaId: coleta.id,
+                  }
+                );
+
+                console.log(`✅ Notificação de chegada enviada para empresa`);
+              }
+            }
+          }
+        } catch (notifError) {
+          console.error("❌ Erro ao enviar notificação de chegada:", notifError);
+          // Não falhar a atualização por erro de notificação
+        }
+      }
+
+      return res.json({ message: "Status da coleta atualizado com sucesso" });
+    } catch (error) {
+      console.error("Erro ao atualizar coleta:", error);
+      return res.status(500).json({ message: "Erro ao atualizar coleta" });
+    }
+  });
+
+  // POST /api/entregador/coletas/:id/foto - Upload de foto da coleta
+  app.post("/api/entregador/coletas/:id/foto", upload.single("foto"), async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      if (!req.file) {
+        return res.status(400).json({ message: "Nenhum arquivo enviado" });
+      }
+
+      const coleta = await storage.getViagemColeta(id);
+      if (!coleta) {
+        return res.status(404).json({ message: "Coleta não encontrada" });
+      }
+
+      // Verificar se a viagem pertence ao motorista
+      const viagem = await storage.getViagemIntermunicipal(coleta.viagemId);
+      if (!viagem || viagem.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      // Upload para Cloudflare R2
+      const imageUrl = await uploadToR2(req.file.buffer, req.file.originalname, 'coletas');
+
+      await storage.updateViagemColeta(id, {
+        fotoComprovanteUrl: imageUrl,
+      });
+
+      return res.json({
+        message: "Foto enviada com sucesso",
+        url: imageUrl
+      });
+    } catch (error) {
+      console.error("Erro ao fazer upload da foto:", error);
+      return res.status(500).json({ message: "Erro ao fazer upload da foto" });
+    }
+  });
+
+  // ========================================
+  // ENTREGADOR (MOBILE APP) - ENTREGAS ROUTES (da viagem)
+  // ========================================
+
+  // GET /api/entregador/viagens/:viagemId/entregas - Listar entregas da viagem
+  app.get("/api/entregador/viagens/:viagemId/entregas", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { viagemId } = req.params;
+
+      // Verificar se a viagem pertence ao motorista
+      const viagem = await storage.getViagemIntermunicipal(viagemId);
+      if (!viagem || viagem.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const entregas = await storage.getViagemEntregas(viagemId);
+      return res.json(entregas);
+    } catch (error) {
+      console.error("Erro ao buscar entregas da viagem:", error);
+      return res.status(500).json({ message: "Erro ao buscar entregas da viagem" });
+    }
+  });
+
+  // PUT /api/entregador/entregas-viagem/:id/status - Atualizar status da entrega da viagem
+  app.put("/api/entregador/entregas-viagem/:id/status", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const { status, motivoFalha, nomeRecebedor, cpfRecebedor, observacoes } = req.body;
+
+      const entrega = await storage.getViagemEntrega(id);
+      if (!entrega) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar se a viagem pertence ao motorista
+      const viagem = await storage.getViagemIntermunicipal(entrega.viagemId);
+      if (!viagem || viagem.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      const updateData: any = { status };
+
+      if (status === "entregue") {
+        updateData.horarioEntrega = new Date();
+        updateData.nomeRecebedor = nomeRecebedor;
+        updateData.cpfRecebedor = cpfRecebedor;
+      } else if (status === "falha") {
+        updateData.motivoFalha = motivoFalha;
+      }
+
+      if (observacoes) {
+        updateData.observacoes = observacoes;
+      }
+
+      await storage.updateViagemEntrega(id, updateData);
+
+      // ===== NOTIFICAÇÃO: Avisar motorista e empresa quando entrega é concluída =====
+      if (status === "entregue") {
+        try {
+          const motorista = await storage.getDriver(req.session.driverId);
+
+          // Buscar entrega intermunicipal relacionada
+          const entregaIntermu = await storage.getEntregaIntermunicipal(entrega.entregaId);
+
+          if (entregaIntermu && motorista) {
+            const empresa = await storage.getCompany(entregaIntermu.empresaId);
+
+            // Notificar EMPRESA
+            if (empresa) {
+              const empresaUser = await storage.getUserByMobile(empresa.mobile);
+
+              if (empresaUser && empresaUser.fcmToken) {
+                console.log(`📤 Enviando notificação de conclusão para empresa ${empresa.name}...`);
+
+                await sendPushNotification(
+                  empresaUser.fcmToken,
+                  "✅ Entrega Concluída!",
+                  `${motorista.name} entregou o pacote ${entregaIntermu.numeroPedido} para ${nomeRecebedor || 'destinatário'}`,
+                  {
+                    type: "entrega_concluida",
+                    entregaId: entregaIntermu.id,
+                    numeroPedido: entregaIntermu.numeroPedido,
+                    motoristaNome: motorista.name || "Motorista",
+                    motoristaId: motorista.id,
+                    nomeRecebedor: nomeRecebedor || "",
+                    cpfRecebedor: cpfRecebedor || "",
+                  }
+                );
+
+                console.log(`✅ Notificação de conclusão enviada para empresa`);
+              }
+            }
+
+            // Notificar MOTORISTA
+            if (motorista.fcmToken) {
+              console.log(`📤 Enviando notificação de conclusão para motorista ${motorista.name}...`);
+
+              // Verificar quantas entregas ainda faltam nesta viagem
+              const todasEntregas = await storage.getViagemEntregas(viagem.id);
+              const entregasPendentes = todasEntregas.filter(e => e.status !== 'entregue' && e.status !== 'falha').length;
+
+              const mensagem = entregasPendentes > 0
+                ? `Entrega concluída! Ainda faltam ${entregasPendentes} entrega(s) nesta viagem.`
+                : `Parabéns! Todas as entregas desta viagem foram concluídas!`;
+
+              await sendPushNotification(
+                motorista.fcmToken,
+                "✅ Entrega Concluída!",
+                mensagem,
+                {
+                  type: "motorista_entrega_concluida",
+                  entregaId: entregaIntermu.id,
+                  numeroPedido: entregaIntermu.numeroPedido,
+                  viagemId: viagem.id,
+                  entregasPendentes: entregasPendentes.toString(),
+                }
+              );
+
+              console.log(`✅ Notificação de conclusão enviada para motorista`);
+            }
+          }
+        } catch (notifError) {
+          console.error("❌ Erro ao enviar notificação de conclusão:", notifError);
+          // Não falhar a atualização por erro de notificação
+        }
+      }
+
+      return res.json({ message: "Status da entrega atualizado com sucesso" });
+    } catch (error) {
+      console.error("Erro ao atualizar entrega:", error);
+      return res.status(500).json({ message: "Erro ao atualizar entrega" });
+    }
+  });
+
+  // POST /api/entregador/entregas-viagem/:id/foto - Upload de foto comprovante
+  app.post("/api/entregador/entregas-viagem/:id/foto", upload.single("foto"), async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      if (!req.file) {
+        return res.status(400).json({ message: "Nenhum arquivo enviado" });
+      }
+
+      const entrega = await storage.getViagemEntrega(id);
+      if (!entrega) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar se a viagem pertence ao motorista
+      const viagem = await storage.getViagemIntermunicipal(entrega.viagemId);
+      if (!viagem || viagem.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      // Upload para Cloudflare R2
+      const imageUrl = await uploadToR2(req.file.buffer, req.file.originalname, 'entregas');
+
+      await storage.updateViagemEntrega(id, {
+        fotoComprovanteUrl: imageUrl,
+      });
+
+      return res.json({
+        message: "Foto enviada com sucesso",
+        url: imageUrl
+      });
+    } catch (error) {
+      console.error("Erro ao fazer upload da foto:", error);
+      return res.status(500).json({ message: "Erro ao fazer upload da foto" });
+    }
+  });
+
+  // POST /api/entregador/entregas-viagem/:id/assinatura - Upload de assinatura
+  app.post("/api/entregador/entregas-viagem/:id/assinatura", upload.single("assinatura"), async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      if (!req.file) {
+        return res.status(400).json({ message: "Nenhum arquivo enviado" });
+      }
+
+      const entrega = await storage.getViagemEntrega(id);
+      if (!entrega) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar se a viagem pertence ao motorista
+      const viagem = await storage.getViagemIntermunicipal(entrega.viagemId);
+      if (!viagem || viagem.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      // Upload para Cloudflare R2
+      const imageUrl = await uploadToR2(req.file.buffer, req.file.originalname, 'assinaturas');
+
+      await storage.updateViagemEntrega(id, {
+        assinaturaUrl: imageUrl,
+      });
+
+      return res.json({
+        message: "Assinatura enviada com sucesso",
+        url: imageUrl
+      });
+    } catch (error) {
+      console.error("Erro ao fazer upload da assinatura:", error);
+      return res.status(500).json({ message: "Erro ao fazer upload da assinatura" });
+    }
+  });
+
+  // POST /api/entregador/entregas-viagem/:id/avaliar - Avaliar entrega
+  app.post("/api/entregador/entregas-viagem/:id/avaliar", async (req, res) => {
+    try {
+      if (!req.session.driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+      const { avaliacaoEstrelas, avaliacaoComentario } = req.body;
+
+      if (!avaliacaoEstrelas || avaliacaoEstrelas < 1 || avaliacaoEstrelas > 5) {
+        return res.status(400).json({ message: "Avaliação deve ser entre 1 e 5 estrelas" });
+      }
+
+      const entrega = await storage.getViagemEntrega(id);
+      if (!entrega) {
+        return res.status(404).json({ message: "Entrega não encontrada" });
+      }
+
+      // Verificar se a viagem pertence ao motorista
+      const viagem = await storage.getViagemIntermunicipal(entrega.viagemId);
+      if (!viagem || viagem.entregadorId !== req.session.driverId) {
+        return res.status(403).json({ message: "Acesso negado" });
+      }
+
+      await storage.updateViagemEntrega(id, {
+        avaliacaoEstrelas,
+        avaliacaoComentario,
+      });
+
+      return res.json({ message: "Avaliação registrada com sucesso" });
+    } catch (error) {
+      console.error("Erro ao avaliar entrega:", error);
+      return res.status(500).json({ message: "Erro ao avaliar entrega" });
     }
   });
 
