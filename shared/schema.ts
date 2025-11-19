@@ -1405,7 +1405,7 @@ export const entregasIntermunicipais = pgTable("entregas_intermunicipais", {
 
   // Informações do pacote
   quantidadePacotes: integer("quantidade_pacotes").notNull().default(1),
-  pesoTotalKg: numeric("peso_total_kg", { precision: 10, scale: 2 }).notNull(),
+  pesoTotalKg: numeric("peso_total_kg", { precision: 10, scale: 2 }),
   volumeTotalM3: numeric("volume_total_m3", { precision: 10, scale: 3 }),
   descricaoConteudo: text("descricao_conteudo"),
   observacoes: text("observacoes"),
@@ -1451,6 +1451,57 @@ export const insertEntregaIntermunicipalSchema = createInsertSchema(entregasInte
 
 export type EntregaIntermunicipal = typeof entregasIntermunicipais.$inferSelect;
 export type InsertEntregaIntermunicipal = z.infer<typeof insertEntregaIntermunicipalSchema>;
+
+// ========================================
+// PARADAS DE ENTREGA INTERMUNICIPAL (Múltiplos destinos em uma entrega)
+// ========================================
+export const entregasIntermunicipalParadas = pgTable("entregas_intermunicipal_paradas", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Referência à entrega principal
+  entregaId: varchar("entrega_id").notNull().references(() => entregasIntermunicipais.id, { onDelete: "cascade" }),
+
+  // Ordem de entrega
+  ordem: integer("ordem").notNull(),
+
+  // Endereço de entrega
+  logradouro: varchar("logradouro", { length: 255 }).notNull(),
+  numero: varchar("numero", { length: 20 }).notNull(),
+  bairro: varchar("bairro", { length: 100 }).notNull(),
+  cidade: varchar("cidade", { length: 100 }).notNull(),
+  cep: varchar("cep", { length: 10 }).notNull(),
+  pontoReferencia: text("ponto_referencia"),
+  enderecoCompleto: text("endereco_completo").notNull(),
+  latitude: varchar("latitude", { length: 50 }),
+  longitude: varchar("longitude", { length: 50 }),
+
+  // Destinatário
+  destinatarioNome: varchar("destinatario_nome", { length: 255 }).notNull(),
+  destinatarioTelefone: varchar("destinatario_telefone", { length: 20 }).notNull(),
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertEntregaIntermunicipalParadaSchema = createInsertSchema(entregasIntermunicipalParadas, {
+  entregaId: z.string().min(1, "Entrega é obrigatória"),
+  ordem: z.number().min(1, "Ordem deve ser maior que zero"),
+  logradouro: z.string().min(1, "Logradouro é obrigatório"),
+  numero: z.string().min(1, "Número é obrigatório"),
+  bairro: z.string().min(1, "Bairro é obrigatório"),
+  cidade: z.string().min(1, "Cidade é obrigatória"),
+  cep: z.string().min(8, "CEP é obrigatório"),
+  enderecoCompleto: z.string().min(1, "Endereço completo é obrigatório"),
+  destinatarioNome: z.string().min(1, "Nome do destinatário é obrigatório"),
+  destinatarioTelefone: z.string().min(10, "Telefone do destinatário é obrigatório"),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type EntregaIntermunicipalParada = typeof entregasIntermunicipalParadas.$inferSelect;
+export type InsertEntregaIntermunicipalParada = z.infer<typeof insertEntregaIntermunicipalParadaSchema>;
 
 // ========================================
 // VIAGENS INTERMUNICIPAIS (Viagens dos motoristas)
@@ -1563,6 +1614,7 @@ export const viagemEntregas = pgTable("viagem_entregas", {
   viagemId: varchar("viagem_id").notNull().references(() => viagensIntermunicipais.id, { onDelete: "cascade" }),
   entregaId: varchar("entrega_id").notNull().references(() => entregasIntermunicipais.id, { onDelete: "cascade" }),
   coletaId: varchar("coleta_id").notNull().references(() => viagemColetas.id, { onDelete: "cascade" }),
+  paradaId: varchar("parada_id").references(() => entregasIntermunicipalParadas.id, { onDelete: "cascade" }),
 
   // Informações da entrega
   enderecoEntrega: text("endereco_entrega").notNull(),

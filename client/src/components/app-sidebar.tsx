@@ -87,6 +87,11 @@ const menuItems = [
         url: "/faq",
         icon: HelpCircle,
       },
+      {
+        title: "Rotas Intermunicipais",
+        url: "/rotas-intermunicipais",
+        icon: Route,
+      },
     ],
   },
   {
@@ -109,11 +114,6 @@ const menuItems = [
     title: "Preços",
     url: "/precos",
     icon: DollarSign,
-  },
-  {
-    title: "Rotas Intermunicipais",
-    url: "/rotas-intermunicipais",
-    icon: Route,
   },
   {
     title: "Motoristas",
@@ -159,11 +159,6 @@ const menuItems = [
         title: "Intermunicipais",
         url: "/admin/entregas-intermunicipais",
         icon: Route,
-      },
-      {
-        title: "Viagens Motoristas",
-        url: "/admin/viagens-intermunicipais",
-        icon: Truck,
       },
     ],
   },

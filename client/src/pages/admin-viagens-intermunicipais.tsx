@@ -1,5 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -11,7 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { Truck, User, MapPin, Calendar, Package } from "lucide-react";
+import { Truck, User, MapPin, Calendar, Package, RefreshCw } from "lucide-react";
 
 type Viagem = {
   id: string;
@@ -49,18 +51,34 @@ const statusLabels: Record<string, string> = {
 };
 
 export default function AdminViagensIntermunicipais() {
-  const { data: viagens = [], isLoading } = useQuery<Viagem[]>({
+  const { data: viagens = [], isLoading, refetch } = useQuery<Viagem[]>({
     queryKey: ["/api/admin/viagens-intermunicipais"],
   });
+
+  const handleRefresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["/api/admin/viagens-intermunicipais"] });
+    refetch();
+  };
 
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader>
-          <CardTitle>Viagens Intermunicipais</CardTitle>
-          <CardDescription>
-            Visualize todas as viagens de motoristas para entregas intermunicipais
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Viagens Intermunicipais</CardTitle>
+            <CardDescription>
+              Visualize todas as viagens de motoristas para entregas intermunicipais
+            </CardDescription>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isLoading}
+          >
+            <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+            Atualizar
+          </Button>
         </CardHeader>
         <CardContent>
           {isLoading ? (

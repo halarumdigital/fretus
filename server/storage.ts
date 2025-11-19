@@ -57,6 +57,9 @@ import {
   entregasIntermunicipais,
   type EntregaIntermunicipal,
   type InsertEntregaIntermunicipal,
+  entregasIntermunicipalParadas,
+  type EntregaIntermunicipalParada,
+  type InsertEntregaIntermunicipalParada,
   viagensIntermunicipais,
   type ViagemIntermunicipal,
   type InsertViagemIntermunicipal,
@@ -193,6 +196,7 @@ export interface IStorage {
 
   // ===== ROTAS INTERMUNICIPAIS =====
   getAllRotasIntermunicipais(): Promise<any[]>;
+  getRotasComEntregadoresAtivos(): Promise<any[]>;
   getRotaIntermunicipal(id: string): Promise<RotaIntermunicipal | undefined>;
   createRotaIntermunicipal(data: InsertRotaIntermunicipal): Promise<RotaIntermunicipal>;
   updateRotaIntermunicipal(id: string, data: Partial<InsertRotaIntermunicipal>): Promise<RotaIntermunicipal | undefined>;
@@ -207,6 +211,11 @@ export interface IStorage {
   updateEntregaIntermunicipal(id: string, data: Partial<InsertEntregaIntermunicipal>): Promise<EntregaIntermunicipal | undefined>;
   deleteEntregaIntermunicipal(id: string): Promise<void>;
 
+  // ===== PARADAS DE ENTREGA INTERMUNICIPAL =====
+  getParadasByEntrega(entregaId: string): Promise<any[]>;
+  createParadaEntrega(data: any): Promise<any>;
+  createParadasEntrega(paradas: any[]): Promise<any[]>;
+
   // ===== VIAGENS INTERMUNICIPAIS =====
   getAllViagensIntermunicipais(): Promise<any[]>;
   getViagensIntermunicipasByEntregador(entregadorId: string): Promise<any[]>;
@@ -216,6 +225,12 @@ export interface IStorage {
   updateViagemIntermunicipal(id: string, data: Partial<InsertViagemIntermunicipal>): Promise<ViagemIntermunicipal | undefined>;
   deleteViagemIntermunicipal(id: string): Promise<void>;
   getMotoristasComRotaConfigurada(rotaId: string, dataViagem: string): Promise<any[]>;
+
+  // ===== VIAGEM COLETAS =====
+  createViagemColeta(data: InsertViagemColeta): Promise<ViagemColeta>;
+
+  // ===== VIAGEM ENTREGAS =====
+  createViagemEntrega(data: InsertViagemEntrega): Promise<ViagemEntrega>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1135,8 +1150,8 @@ export class DatabaseStorage implements IStorage {
         cidadeOrigemNome: sql<string>`origem.name`,
         cidadeDestinoNome: sql<string>`destino.name`,
         distanciaKm: rotasIntermunicipais.distanciaKm,
-        tempoMedioMinutos: rotasIntermunicipais.tempoMedioMinutos,
-        ativa: rotasIntermunicipais.ativa,
+        tempoEstimadoMinutos: rotasIntermunicipais.tempoMedioMinutos, // Mapeado para compatibilidade com app mobile
+        ativo: rotasIntermunicipais.ativa, // Mapeado: ativa -> ativo
         createdAt: rotasIntermunicipais.createdAt,
         updatedAt: rotasIntermunicipais.updatedAt,
       })
@@ -1148,6 +1163,57 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(
         sql`service_locations as destino`,
         sql`${rotasIntermunicipais.cidadeDestinoId} = destino.id`
+      )
+      .orderBy(rotasIntermunicipais.nomeRota);
+
+    return result;
+  }
+
+  async getRotasComEntregadoresAtivos(): Promise<any[]> {
+    // Buscar rotas que têm pelo menos um entregador ativo configurado
+    const result = await db
+      .select({
+        id: rotasIntermunicipais.id,
+        nomeRota: rotasIntermunicipais.nomeRota,
+        cidadeOrigemId: rotasIntermunicipais.cidadeOrigemId,
+        cidadeDestinoId: rotasIntermunicipais.cidadeDestinoId,
+        cidadeOrigemNome: sql<string>`origem.name`,
+        cidadeDestinoNome: sql<string>`destino.name`,
+        distanciaKm: rotasIntermunicipais.distanciaKm,
+        tempoMedioMinutos: rotasIntermunicipais.tempoMedioMinutos, // ✅ Nome do campo conforme esperado no frontend entregas-intermunicipais
+        ativa: rotasIntermunicipais.ativa, // ✅ Retorna como "ativa" (consistente com frontend)
+        // Contar quantos entregadores ativos têm nessa rota
+        totalEntregadores: sql<number>`COUNT(DISTINCT ${entregadorRotas.entregadorId})::int`,
+        // Agregar todos os dias da semana disponíveis (união de todos os entregadores)
+        diasSemana: sql<number[]>`ARRAY(SELECT DISTINCT unnest(array_agg(${entregadorRotas.diasSemana})) ORDER BY 1)`,
+      })
+      .from(rotasIntermunicipais)
+      .leftJoin(
+        sql`service_locations as origem`,
+        sql`${rotasIntermunicipais.cidadeOrigemId} = origem.id`
+      )
+      .leftJoin(
+        sql`service_locations as destino`,
+        sql`${rotasIntermunicipais.cidadeDestinoId} = destino.id`
+      )
+      .innerJoin(
+        entregadorRotas,
+        and(
+          eq(entregadorRotas.rotaId, rotasIntermunicipais.id),
+          eq(entregadorRotas.ativa, true)
+        )
+      )
+      .where(eq(rotasIntermunicipais.ativa, true))
+      .groupBy(
+        rotasIntermunicipais.id,
+        rotasIntermunicipais.nomeRota,
+        rotasIntermunicipais.cidadeOrigemId,
+        rotasIntermunicipais.cidadeDestinoId,
+        rotasIntermunicipais.distanciaKm,
+        rotasIntermunicipais.tempoMedioMinutos,
+        rotasIntermunicipais.ativa,
+        sql`origem.name`,
+        sql`destino.name`
       )
       .orderBy(rotasIntermunicipais.nomeRota);
 
@@ -1235,11 +1301,14 @@ export class DatabaseStorage implements IStorage {
         valorTotal: entregasIntermunicipais.valorTotal,
         status: entregasIntermunicipais.status,
         viagemId: entregasIntermunicipais.viagemId,
+        motoristaName: drivers.name,
         createdAt: entregasIntermunicipais.createdAt,
         updatedAt: entregasIntermunicipais.updatedAt,
       })
       .from(entregasIntermunicipais)
       .leftJoin(rotasIntermunicipais, eq(entregasIntermunicipais.rotaId, rotasIntermunicipais.id))
+      .leftJoin(viagensIntermunicipais, eq(entregasIntermunicipais.viagemId, viagensIntermunicipais.id))
+      .leftJoin(drivers, eq(viagensIntermunicipais.entregadorId, drivers.id))
       .where(eq(entregasIntermunicipais.empresaId, empresaId))
       .orderBy(desc(entregasIntermunicipais.createdAt));
 
@@ -1288,6 +1357,34 @@ export class DatabaseStorage implements IStorage {
 
   async deleteEntregaIntermunicipal(id: string): Promise<void> {
     await db.delete(entregasIntermunicipais).where(eq(entregasIntermunicipais.id, id));
+  }
+
+  // ========================================
+  // PARADAS DE ENTREGA INTERMUNICIPAL
+  // ========================================
+  async getParadasByEntrega(entregaId: string): Promise<any[]> {
+    const result = await db
+      .select()
+      .from(entregasIntermunicipalParadas)
+      .where(eq(entregasIntermunicipalParadas.entregaId, entregaId))
+      .orderBy(entregasIntermunicipalParadas.ordem);
+    return result;
+  }
+
+  async createParadaEntrega(data: any): Promise<any> {
+    const [parada] = await db
+      .insert(entregasIntermunicipalParadas)
+      .values(data)
+      .returning();
+    return parada;
+  }
+
+  async createParadasEntrega(paradas: any[]): Promise<any[]> {
+    const result = await db
+      .insert(entregasIntermunicipalParadas)
+      .values(paradas)
+      .returning();
+    return result;
   }
 
   // ========================================
@@ -1341,7 +1438,12 @@ export class DatabaseStorage implements IStorage {
       })
       .from(viagensIntermunicipais)
       .leftJoin(rotasIntermunicipais, eq(viagensIntermunicipais.rotaId, rotasIntermunicipais.id))
-      .where(eq(viagensIntermunicipais.entregadorId, entregadorId))
+      .where(
+        and(
+          eq(viagensIntermunicipais.entregadorId, entregadorId),
+          sql`${viagensIntermunicipais.status} != 'cancelada'`
+        )
+      )
       .orderBy(desc(viagensIntermunicipais.dataViagem));
 
     return result;
@@ -1392,18 +1494,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getMotoristasComRotaConfigurada(rotaId: string, dataViagem: string): Promise<any[]> {
+    // Calcular dia da semana da data (1=Segunda, 7=Domingo)
+    const dateParts = dataViagem.split('-');
+    const date = new Date(parseInt(dateParts[0]), parseInt(dateParts[1]) - 1, parseInt(dateParts[2]));
+    const diaSemana = date.getDay() === 0 ? 7 : date.getDay(); // Converter domingo de 0 para 7
+
     const result = await db
       .select({
         id: drivers.id,
         name: drivers.name,
         fcmToken: drivers.fcmToken,
       })
-      .from(viagensIntermunicipais)
-      .innerJoin(drivers, eq(viagensIntermunicipais.entregadorId, drivers.id))
+      .from(entregadorRotas)
+      .innerJoin(drivers, eq(entregadorRotas.entregadorId, drivers.id))
       .where(
         and(
-          eq(viagensIntermunicipais.rotaId, rotaId),
-          sql`${viagensIntermunicipais.dataViagem}::text = ${dataViagem}`,
+          eq(entregadorRotas.rotaId, rotaId),
+          eq(entregadorRotas.ativa, true), // Rota ativa
+          sql`${diaSemana} = ANY(${entregadorRotas.diasSemana})`, // Dia da semana configurado
           eq(drivers.approve, true), // Motorista aprovado
           eq(drivers.available, true) // Motorista disponível
         )
@@ -1416,12 +1524,69 @@ export class DatabaseStorage implements IStorage {
   // VIAGEM COLETAS
   // ========================================
   async getViagemColetas(viagemId: string): Promise<any[]> {
-    const result = await db
-      .select()
+    console.log(`🔍 [storage.getViagemColetas] Buscando coletas para viagem ${viagemId}`);
+
+    // Buscar coletas da tabela viagem_coletas com join de entrega e empresa
+    // IMPORTANTE: Filtrar apenas entregas NÃO canceladas
+    const coletas = await db
+      .select({
+        coleta: viagemColetas,
+        entrega: entregasIntermunicipais,
+        empresa: companies
+      })
       .from(viagemColetas)
-      .where(eq(viagemColetas.viagemId, viagemId))
+      .leftJoin(entregasIntermunicipais, eq(viagemColetas.entregaId, entregasIntermunicipais.id))
+      .leftJoin(companies, eq(entregasIntermunicipais.empresaId, companies.id))
+      .where(
+        and(
+          eq(viagemColetas.viagemId, viagemId),
+          sql`${entregasIntermunicipais.status} NOT IN ('cancelada', 'concluida')`
+        )
+      )
       .orderBy(viagemColetas.ordemColeta);
-    return result;
+
+    console.log(`📦 [storage.getViagemColetas] Coletas encontradas: ${coletas.length}`);
+
+    // Montar estrutura de retorno
+    const coletasFormatadas = coletas.map(({ coleta, entrega, empresa }) => ({
+      id: coleta.id, // ← ID correto da coleta na tabela viagem_coletas
+      ordem_coleta: coleta.ordemColeta,
+      viagem_id: coleta.viagemId,
+      entrega_id: coleta.entregaId,
+      empresa_id: entrega?.empresaId,
+      empresa_nome: empresa?.name || 'Empresa não encontrada',
+      empresa_endereco_completo: empresa ? `${empresa.street}, ${empresa.number} - ${empresa.neighborhood}, ${empresa.city} - CEP: ${empresa.cep}` : null,
+      empresa_logradouro: empresa?.street,
+      empresa_numero: empresa?.number,
+      empresa_bairro: empresa?.neighborhood,
+      empresa_cidade: empresa?.city,
+      empresa_cep: empresa?.cep,
+      empresa_telefone: empresa?.phone,
+      empresa_responsavel: empresa?.responsibleName,
+      empresa_whatsapp: empresa?.responsibleWhatsapp,
+      numero_pedido: entrega?.numeroPedido,
+      endereco_completo: coleta.enderecoColeta,
+      logradouro: coleta.enderecoColeta?.split(',')[0]?.trim(),
+      quantidade_pacotes: entrega?.quantidadePacotes || 0,
+      status: coleta.status, // ← STATUS REAL da tabela viagem_coletas
+      horario_previsto: coleta.horarioPrevisto,
+      horario_chegada: coleta.horarioChegada,
+      horario_coleta: coleta.horarioColeta,
+      observacoes: coleta.observacoes,
+      motivo_falha: coleta.motivoFalha,
+      foto_comprovante_url: coleta.fotoComprovanteUrl
+    }));
+
+    console.log(`✅ [storage.getViagemColetas] Coletas formatadas: ${coletasFormatadas.length}`);
+    if (coletasFormatadas.length > 0) {
+      console.log(`📋 [storage.getViagemColetas] Primeira coleta:`, {
+        id: coletasFormatadas[0].id,
+        empresa_nome: coletasFormatadas[0].empresa_nome,
+        numero_pedido: coletasFormatadas[0].numero_pedido,
+        status: coletasFormatadas[0].status
+      });
+    }
+    return coletasFormatadas;
   }
 
   async getViagemColeta(id: string): Promise<ViagemColeta | undefined> {
@@ -1429,6 +1594,14 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(viagemColetas)
       .where(eq(viagemColetas.id, id));
+    return coleta || undefined;
+  }
+
+  async getViagemColetaByEntregaId(entregaId: string): Promise<ViagemColeta | undefined> {
+    const [coleta] = await db
+      .select()
+      .from(viagemColetas)
+      .where(eq(viagemColetas.entregaId, entregaId));
     return coleta || undefined;
   }
 
@@ -1441,16 +1614,73 @@ export class DatabaseStorage implements IStorage {
     return updated || undefined;
   }
 
+  async createViagemColeta(data: InsertViagemColeta): Promise<ViagemColeta> {
+    const [coleta] = await db
+      .insert(viagemColetas)
+      .values(data)
+      .returning();
+    return coleta;
+  }
+
   // ========================================
   // VIAGEM ENTREGAS
   // ========================================
   async getViagemEntregas(viagemId: string): Promise<any[]> {
-    const result = await db
-      .select()
+    console.log(`🔍 [storage.getViagemEntregas] Buscando entregas para viagem ${viagemId}`);
+
+    // Buscar entregas da tabela viagem_entregas com join de entrega intermunicipal
+    // IMPORTANTE: Filtrar apenas entregas NÃO canceladas
+    const entregas = await db
+      .select({
+        viagemEntrega: viagemEntregas,
+        entregaIntermu: entregasIntermunicipais
+      })
       .from(viagemEntregas)
-      .where(eq(viagemEntregas.viagemId, viagemId))
+      .leftJoin(entregasIntermunicipais, eq(viagemEntregas.entregaId, entregasIntermunicipais.id))
+      .where(
+        and(
+          eq(viagemEntregas.viagemId, viagemId),
+          sql`${entregasIntermunicipais.status} NOT IN ('cancelada', 'concluida')`
+        )
+      )
       .orderBy(viagemEntregas.ordemEntrega);
-    return result;
+
+    console.log(`📦 [storage.getViagemEntregas] Entregas encontradas: ${entregas.length}`);
+
+    // Montar estrutura de retorno
+    const entregasFormatadas = entregas.map(({ viagemEntrega, entregaIntermu }) => ({
+      id: viagemEntrega.id, // ← ID correto da entrega na tabela viagem_entregas
+      ordem_entrega: viagemEntrega.ordemEntrega,
+      viagem_id: viagemEntrega.viagemId,
+      entrega_id: viagemEntrega.entregaId,
+      parada_id: viagemEntrega.paradaId,
+      numero_pedido: entregaIntermu?.numeroPedido || '',
+      endereco_completo: viagemEntrega.enderecoEntrega,
+      logradouro: viagemEntrega.enderecoEntrega?.split(',')[0]?.trim(),
+      destinatario_nome: viagemEntrega.destinatarioNome,
+      destinatario_telefone: viagemEntrega.destinatarioTelefone,
+      status: viagemEntrega.status, // ← STATUS REAL da tabela viagem_entregas
+      horario_previsto: viagemEntrega.horarioPrevisto,
+      horario_chegada: viagemEntrega.horarioChegada,
+      horario_entrega: viagemEntrega.horarioEntrega,
+      nome_recebedor: viagemEntrega.nomeRecebedor,
+      cpf_recebedor: viagemEntrega.cpfRecebedor,
+      observacoes: viagemEntrega.observacoes,
+      motivo_falha: viagemEntrega.motivoFalha,
+      foto_comprovante_url: viagemEntrega.fotoComprovanteUrl,
+      assinatura_url: viagemEntrega.assinaturaUrl
+    }));
+
+    console.log(`✅ [storage.getViagemEntregas] Entregas formatadas: ${entregasFormatadas.length}`);
+    if (entregasFormatadas.length > 0) {
+      console.log(`📋 [storage.getViagemEntregas] Primeira entrega:`, {
+        id: entregasFormatadas[0].id,
+        numero_pedido: entregasFormatadas[0].numero_pedido,
+        destinatario: entregasFormatadas[0].destinatario_nome,
+        status: entregasFormatadas[0].status
+      });
+    }
+    return entregasFormatadas;
   }
 
   async getViagemEntrega(id: string): Promise<ViagemEntrega | undefined> {
@@ -1461,6 +1691,14 @@ export class DatabaseStorage implements IStorage {
     return entrega || undefined;
   }
 
+  async getViagemEntregaByEntregaId(entregaId: string): Promise<ViagemEntrega | undefined> {
+    const [entrega] = await db
+      .select()
+      .from(viagemEntregas)
+      .where(eq(viagemEntregas.entregaId, entregaId));
+    return entrega || undefined;
+  }
+
   async updateViagemEntrega(id: string, data: Partial<InsertViagemEntrega>): Promise<ViagemEntrega | undefined> {
     const [updated] = await db
       .update(viagemEntregas)
@@ -1468,6 +1706,14 @@ export class DatabaseStorage implements IStorage {
       .where(eq(viagemEntregas.id, id))
       .returning();
     return updated || undefined;
+  }
+
+  async createViagemEntrega(data: InsertViagemEntrega): Promise<ViagemEntrega> {
+    const [entrega] = await db
+      .insert(viagemEntregas)
+      .values(data)
+      .returning();
+    return entrega;
   }
 
   // ========================================
@@ -1506,11 +1752,15 @@ export class DatabaseStorage implements IStorage {
         cidadeOrigemNome: sql<string>`cidade_origem.name`,
         cidadeDestinoNome: sql<string>`cidade_destino.name`,
         distanciaKm: rotasIntermunicipais.distanciaKm,
-        tempoEstimadoMinutos: rotasIntermunicipais.tempoEstimadoMinutos,
+        tempoEstimadoMinutos: rotasIntermunicipais.tempoMedioMinutos,
+
+        // Campos da configuração do entregador
         capacidadePacotes: entregadorRotas.capacidadePacotes,
         capacidadePesoKg: entregadorRotas.capacidadePesoKg,
-        horarioSaidaPadrao: entregadorRotas.horarioSaidaPadrao,
-        ativo: entregadorRotas.ativo,
+        diasSemana: entregadorRotas.diasSemana, // ✅ Campo adicionado
+        horarioSaidaPadrao: entregadorRotas.horarioSaida,
+        horarioChegada: entregadorRotas.horarioChegada,
+        ativo: entregadorRotas.ativa,
       })
       .from(entregadorRotas)
       .leftJoin(rotasIntermunicipais, eq(entregadorRotas.rotaId, rotasIntermunicipais.id))

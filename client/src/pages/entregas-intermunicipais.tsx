@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -45,10 +45,19 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useForm } from "react-hook-form";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { cn } from "@/lib/utils";
+import { useForm, useFieldArray } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { PlusCircle, Package, Trash2, Calendar, MapPin } from "lucide-react";
+import { PlusCircle, Package, Trash2, Calendar, MapPin, Clock, Ruler, Eye, Phone, Building2, User } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import "@/styles/google-maps-fix.css";
@@ -75,6 +84,7 @@ type EntregaIntermunicipal = {
   valorTotal: string;
   status: string;
   viagemId?: string;
+  motoristaName?: string;
   createdAt: string;
 };
 
@@ -86,6 +96,7 @@ type RotaIntermunicipal = {
   distanciaKm: string;
   tempoMedioMinutos: number;
   ativa: boolean;
+  diasSemana: number[]; // Dias da semana disponíveis (1=Seg, 2=Ter, ..., 7=Dom)
 };
 
 type CityPrice = {
@@ -98,6 +109,45 @@ type CityPrice = {
   stopPrice: string;
   active: boolean;
 };
+
+type Parada = {
+  id: string;
+  ordem: number;
+  destinatarioNome: string;
+  destinatarioTelefone: string;
+  enderecoCompleto: string;
+  observacoes: string | null;
+};
+
+type EntregaDetalhes = EntregaIntermunicipal & {
+  paradas: Parada[];
+  viagem: {
+    id: string;
+    dataViagem: string;
+    viagemStatus: string;
+    horarioSaidaPlanejado: string;
+    horarioSaidaReal: string | null;
+  } | null;
+  entregador: {
+    id: string;
+    name: string;
+    phone: string;
+  } | null;
+};
+
+// Schema para cada endereço de entrega
+const enderecoEntregaSchema = z.object({
+  logradouro: z.string().min(3, "Logradouro é obrigatório"),
+  numero: z.string().min(1, "Número é obrigatório"),
+  bairro: z.string().min(2, "Bairro é obrigatório"),
+  cidade: z.string().min(2, "Cidade é obrigatória"),
+  cep: z.string().min(8, "CEP é obrigatório"),
+  pontoReferencia: z.string().optional(),
+  latitude: z.string().optional(),
+  longitude: z.string().optional(),
+  destinatarioNome: z.string().min(3, "Nome do destinatário é obrigatório"),
+  destinatarioTelefone: z.string().min(10, "Telefone do destinatário é obrigatório"),
+});
 
 const entregaSchema = z.object({
   rotaId: z.string().min(1, "Rota é obrigatória"),
@@ -114,19 +164,8 @@ const entregaSchema = z.object({
   enderecoColetaLatitude: z.string().optional(),
   enderecoColetaLongitude: z.string().optional(),
 
-  // Endereço de entrega (campos separados)
-  enderecoEntregaLogradouro: z.string().min(3, "Logradouro é obrigatório"),
-  enderecoEntregaNumero: z.string().min(1, "Número é obrigatório"),
-  enderecoEntregaBairro: z.string().min(2, "Bairro é obrigatório"),
-  enderecoEntregaCidade: z.string().min(2, "Cidade é obrigatória"),
-  enderecoEntregaCep: z.string().min(8, "CEP é obrigatório"),
-  enderecoEntregaPontoReferencia: z.string().optional(),
-  enderecoEntregaLatitude: z.string().optional(),
-  enderecoEntregaLongitude: z.string().optional(),
-
-  // Destinatário
-  destinatarioNome: z.string().min(3, "Nome do destinatário é obrigatório"),
-  destinatarioTelefone: z.string().min(10, "Telefone do destinatário é obrigatório"),
+  // Array de endereços de entrega
+  enderecosEntrega: z.array(enderecoEntregaSchema).min(1, "Pelo menos um endereço de entrega é obrigatório"),
 
   // Informações do pacote
   quantidadePacotes: z.coerce.number().min(1, "Quantidade deve ser maior que zero"),
@@ -144,6 +183,7 @@ const statusColors: Record<string, string> = {
   em_transito: "default",
   em_entrega: "default",
   entregue: "default",
+  cancelada: "destructive",
 };
 
 const statusLabels: Record<string, string> = {
@@ -154,14 +194,43 @@ const statusLabels: Record<string, string> = {
   em_transito: "Em Trânsito",
   em_entrega: "Em Entrega",
   entregue: "Entregue",
+  cancelada: "Cancelada",
 };
+
+// Helpers para dias da semana
+const diasSemanaNomes: Record<number, string> = {
+  1: "segunda-feira",
+  2: "terça-feira",
+  3: "quarta-feira",
+  4: "quinta-feira",
+  5: "sexta-feira",
+  6: "sábado",
+  7: "domingo",
+};
+
+function getDiasSemanaTexto(diasSemana: number[]): string {
+  if (!diasSemana || diasSemana.length === 0) return "";
+  if (diasSemana.length === 7) return "todos os dias";
+  if (diasSemana.length === 1) return `toda ${diasSemanaNomes[diasSemana[0]]}`;
+
+  const nomes = diasSemana.map(d => diasSemanaNomes[d]);
+  if (nomes.length === 2) {
+    return `toda ${nomes[0]} e ${nomes[1]}`;
+  }
+
+  const ultimos = nomes.slice(-1)[0];
+  const primeiros = nomes.slice(0, -1).join(", ");
+  return `toda ${primeiros} e ${ultimos}`;
+}
 
 export default function EntregasIntermunicipais() {
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedRota, setSelectedRota] = useState<string>("");
-  const enderecoEntregaInputRef = useRef<HTMLInputElement>(null);
-  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+  const [accordionValue, setAccordionValue] = useState<string>("0");
+  const [selectedEntregaId, setSelectedEntregaId] = useState<string | null>(null);
+  const enderecoInputsRef = useRef<{ [key: number]: HTMLInputElement | null }>({});
+  const autocompletesRef = useRef<{ [key: number]: google.maps.places.Autocomplete | null }>({});
 
   // Buscar dados da empresa logada
   const { data: empresa } = useQuery<any>({
@@ -173,9 +242,16 @@ export default function EntregasIntermunicipais() {
     queryKey: ["/api/config/google-maps"],
   });
 
-  // Buscar entregas
+  // Buscar entregas (auto-refresh a cada 5 segundos)
   const { data: entregas = [], isLoading } = useQuery<EntregaIntermunicipal[]>({
     queryKey: ["/api/entregas-intermunicipais"],
+    refetchInterval: 5000, // Atualiza a cada 5 segundos
+  });
+
+  // Buscar detalhes da entrega selecionada
+  const { data: entregaDetalhes, isLoading: loadingDetalhes } = useQuery<EntregaDetalhes>({
+    queryKey: ["/api/entregas-intermunicipais", selectedEntregaId],
+    enabled: !!selectedEntregaId,
   });
 
   // Buscar rotas ativas
@@ -187,10 +263,25 @@ export default function EntregasIntermunicipais() {
   // Buscar preços para rota selecionada
   const { data: precos = [] } = useQuery<CityPrice[]>({
     queryKey: ["/api/city-prices"],
-    select: (data) =>
-      data.filter((p) => p.active && p.rotaIntermunicipalId === selectedRota),
+    select: (data) => {
+      console.log("🔍 Filtrando preços:", {
+        selectedRota,
+        totalPrecos: data.length,
+        precosFiltrados: data.filter((p) => p.active && p.rotaIntermunicipalId === selectedRota).length,
+        todosPrecos: data.map(p => ({ id: p.rotaIntermunicipalId, nome: p.rotaIntermunicipalNome, ativo: p.active }))
+      });
+      return data.filter((p) => p.active && p.rotaIntermunicipalId === selectedRota);
+    },
     enabled: !!selectedRota,
   });
+
+  // Selecionar automaticamente se houver apenas 1 categoria
+  useEffect(() => {
+    if (precos.length === 1 && !form.watch("precoId")) {
+      console.log("✅ Auto-selecionando única categoria:", precos[0].vehicleTypeName);
+      form.setValue("precoId", precos[0].id);
+    }
+  }, [precos]);
 
   // Mutation para criar entrega
   const createMutation = useMutation({
@@ -242,16 +333,23 @@ export default function EntregasIntermunicipais() {
       enderecoColetaCidade: "",
       enderecoColetaCep: "",
       enderecoColetaPontoReferencia: "",
-      enderecoEntregaLogradouro: "",
-      enderecoEntregaNumero: "",
-      enderecoEntregaBairro: "",
-      enderecoEntregaCidade: "",
-      enderecoEntregaCep: "",
-      enderecoEntregaPontoReferencia: "",
-      destinatarioNome: "",
-      destinatarioTelefone: "",
+      enderecosEntrega: [{
+        logradouro: "",
+        numero: "",
+        bairro: "",
+        cidade: "",
+        cep: "",
+        pontoReferencia: "",
+        destinatarioNome: "",
+        destinatarioTelefone: "",
+      }],
       quantidadePacotes: 1,
     },
+  });
+
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: "enderecosEntrega",
   });
 
   const rotaId = form.watch("rotaId");
@@ -268,14 +366,16 @@ export default function EntregasIntermunicipais() {
       enderecoColetaCidade: empresa?.city || "",
       enderecoColetaCep: empresa?.cep || "",
       enderecoColetaPontoReferencia: empresa?.reference || "",
-      enderecoEntregaLogradouro: "",
-      enderecoEntregaNumero: "",
-      enderecoEntregaBairro: "",
-      enderecoEntregaCidade: "",
-      enderecoEntregaCep: "",
-      enderecoEntregaPontoReferencia: "",
-      destinatarioNome: "",
-      destinatarioTelefone: "",
+      enderecosEntrega: [{
+        logradouro: "",
+        numero: "",
+        bairro: "",
+        cidade: "",
+        cep: "",
+        pontoReferencia: "",
+        destinatarioNome: "",
+        destinatarioTelefone: "",
+      }],
       quantidadePacotes: 1,
     });
     setSelectedRota("");
@@ -288,20 +388,56 @@ export default function EntregasIntermunicipais() {
     setSelectedRota("");
   };
 
-  const onSubmit = (data: EntregaForm) => {
+  const onSubmit = async (data: EntregaForm) => {
     // Montar endereço completo de coleta a partir dos campos separados
     const enderecoColetaCompleto = `${data.enderecoColetaLogradouro}, ${data.enderecoColetaNumero}, ${data.enderecoColetaBairro}${data.enderecoColetaCidade ? `, ${data.enderecoColetaCidade}` : ''}${data.enderecoColetaCep ? `, CEP: ${data.enderecoColetaCep}` : ''}${data.enderecoColetaPontoReferencia ? ` - Ref: ${data.enderecoColetaPontoReferencia}` : ''}`;
 
-    // Montar endereço completo de entrega a partir dos campos separados
-    const enderecoEntregaCompleto = `${data.enderecoEntregaLogradouro}, ${data.enderecoEntregaNumero}, ${data.enderecoEntregaBairro}, ${data.enderecoEntregaCidade}, CEP: ${data.enderecoEntregaCep}${data.enderecoEntregaPontoReferencia ? ` - Ref: ${data.enderecoEntregaPontoReferencia}` : ''}`;
+    // Processar todos os endereços de entrega com endereço completo
+    const enderecosEntrega = data.enderecosEntrega.map((endereco) => ({
+      ...endereco,
+      enderecoCompleto: `${endereco.logradouro}, ${endereco.numero}, ${endereco.bairro}, ${endereco.cidade}, CEP: ${endereco.cep}${endereco.pontoReferencia ? ` - Ref: ${endereco.pontoReferencia}` : ''}`,
+    }));
 
+    // Criar UMA entrega com MÚLTIPLOS endereços
     const payload = {
-      ...data,
+      rotaId: data.rotaId,
+      precoId: data.precoId,
+      dataAgendada: data.dataAgendada,
+      enderecoColetaLogradouro: data.enderecoColetaLogradouro,
+      enderecoColetaNumero: data.enderecoColetaNumero,
+      enderecoColetaBairro: data.enderecoColetaBairro,
+      enderecoColetaCidade: data.enderecoColetaCidade,
+      enderecoColetaCep: data.enderecoColetaCep,
+      enderecoColetaPontoReferencia: data.enderecoColetaPontoReferencia,
+      enderecoColetaLatitude: data.enderecoColetaLatitude,
+      enderecoColetaLongitude: data.enderecoColetaLongitude,
       enderecoColetaCompleto,
-      enderecoEntregaCompleto,
+      enderecosEntrega, // Array com todos os endereços
+      quantidadePacotes: data.quantidadePacotes,
+      descricaoConteudo: data.descricaoConteudo,
+      observacoes: data.observacoes,
     };
 
-    createMutation.mutate(payload as any);
+    try {
+      await apiRequest("POST", "/api/entregas-intermunicipais", payload);
+      queryClient.invalidateQueries({ queryKey: ["/api/entregas-intermunicipais"] });
+
+      const numParadas = data.enderecosEntrega.length;
+      toast({
+        title: "Sucesso!",
+        description: numParadas > 1
+          ? `Entrega agendada com ${numParadas} paradas`
+          : "Entrega agendada com sucesso"
+      });
+      setIsDialogOpen(false);
+      form.reset();
+    } catch (error: any) {
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao agendar entrega",
+        variant: "destructive"
+      });
+    }
   };
 
   const handleDelete = async (id: string, status: string, viagemId?: string) => {
@@ -333,72 +469,89 @@ export default function EntregasIntermunicipais() {
     document.head.appendChild(script);
   }, [googleMapsConfig]);
 
-  // Setup Google Places Autocomplete
+  // Função para inicializar autocomplete para um endereço específico
+  const initializeAutocomplete = useCallback((index: number) => {
+    const inputElement = enderecoInputsRef.current[index];
+
+    if (!window.google?.maps?.places || !inputElement) {
+      return;
+    }
+
+    // Limpar autocomplete anterior para este índice
+    if (autocompletesRef.current[index]) {
+      google.maps.event.clearInstanceListeners(autocompletesRef.current[index]!);
+    }
+
+    // Criar novo autocomplete
+    const autocomplete = new google.maps.places.Autocomplete(inputElement, {
+      componentRestrictions: { country: "br" },
+      fields: ["address_components", "formatted_address", "geometry"],
+      types: ["address"],
+    });
+
+    autocompletesRef.current[index] = autocomplete;
+
+    // Listener para quando o usuário seleciona um endereço
+    autocomplete.addListener("place_changed", () => {
+      const place = autocomplete.getPlace();
+      if (!place.address_components) return;
+
+      let street = "";
+      let number = "";
+      let neighborhood = "";
+      let postalCode = "";
+      let city = "";
+
+      place.address_components.forEach((component) => {
+        const types = component.types;
+        if (types.includes("route")) street = component.long_name;
+        if (types.includes("street_number")) number = component.long_name;
+        if (types.includes("sublocality") || types.includes("sublocality_level_1"))
+          neighborhood = component.long_name;
+        if (types.includes("postal_code")) postalCode = component.long_name;
+        if (types.includes("administrative_area_level_2")) city = component.long_name;
+      });
+
+      // Atualizar o formulário com os dados do endereço específico
+      form.setValue(`enderecosEntrega.${index}.logradouro`, street);
+      form.setValue(`enderecosEntrega.${index}.numero`, number);
+      form.setValue(`enderecosEntrega.${index}.bairro`, neighborhood);
+      form.setValue(`enderecosEntrega.${index}.cidade`, city);
+      form.setValue(`enderecosEntrega.${index}.cep`, postalCode);
+    });
+  }, [form]);
+
+  // Setup Google Places Autocomplete para todos os campos
   useEffect(() => {
-    if (!window.google?.maps?.places || !isDialogOpen || !enderecoEntregaInputRef.current) {
-      // Limpar autocomplete quando o modal fecha
-      if (!isDialogOpen && autocompleteRef.current) {
-        google.maps.event.clearInstanceListeners(autocompleteRef.current);
-        autocompleteRef.current = null;
+    if (!window.google?.maps?.places || !isDialogOpen) {
+      // Limpar todos os autocompletes quando o modal fecha
+      if (!isDialogOpen) {
+        Object.values(autocompletesRef.current).forEach((autocomplete) => {
+          if (autocomplete) {
+            google.maps.event.clearInstanceListeners(autocomplete);
+          }
+        });
+        autocompletesRef.current = {};
+        enderecoInputsRef.current = {};
       }
       return;
     }
 
-    // Aguardar um pouco para o input ser renderizado
+    // Inicializar autocomplete para cada campo que existe
     const timer = setTimeout(() => {
-      if (!enderecoEntregaInputRef.current) return;
-
-      // Limpar autocomplete anterior
-      if (autocompleteRef.current) {
-        google.maps.event.clearInstanceListeners(autocompleteRef.current);
-      }
-
-      // Criar novo autocomplete
-      const autocomplete = new google.maps.places.Autocomplete(enderecoEntregaInputRef.current, {
-        componentRestrictions: { country: "br" },
-        fields: ["address_components", "formatted_address", "geometry"],
-        types: ["address"],
-      });
-
-      autocompleteRef.current = autocomplete;
-
-      // Listener para quando o usuário seleciona um endereço
-      autocomplete.addListener("place_changed", () => {
-        const place = autocomplete.getPlace();
-        if (!place.address_components) return;
-
-        let street = "";
-        let number = "";
-        let neighborhood = "";
-        let postalCode = "";
-        let city = "";
-        let state = "";
-
-        place.address_components.forEach((component) => {
-          const types = component.types;
-          if (types.includes("route")) street = component.long_name;
-          if (types.includes("street_number")) number = component.long_name;
-          if (types.includes("sublocality") || types.includes("sublocality_level_1"))
-            neighborhood = component.long_name;
-          if (types.includes("postal_code")) postalCode = component.long_name;
-          if (types.includes("administrative_area_level_2")) city = component.long_name;
-          if (types.includes("administrative_area_level_1")) state = component.short_name;
-        });
-
-        // Atualizar o formulário com os dados do endereço
-        form.setValue("enderecoEntregaLogradouro", street);
-        form.setValue("enderecoEntregaNumero", number);
-        form.setValue("enderecoEntregaBairro", neighborhood);
-        form.setValue("enderecoEntregaCidade", city);
-        form.setValue("enderecoEntregaCep", postalCode);
+      fields.forEach((_, index) => {
+        if (enderecoInputsRef.current[index]) {
+          initializeAutocomplete(index);
+        }
       });
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [isDialogOpen, form]);
+  }, [isDialogOpen, fields, initializeAutocomplete]);
 
   // Atualizar selectedRota quando rotaId mudar
   if (rotaId && rotaId !== selectedRota) {
+    console.log("🔄 Atualizando selectedRota:", { de: selectedRota, para: rotaId });
     setSelectedRota(rotaId);
   }
 
@@ -441,6 +594,7 @@ export default function EntregasIntermunicipais() {
                   <TableHead>Peso</TableHead>
                   <TableHead>Valor</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Motorista</TableHead>
                   <TableHead className="text-right">Ações</TableHead>
                 </TableRow>
               </TableHeader>
@@ -461,16 +615,29 @@ export default function EntregasIntermunicipais() {
                         {statusLabels[entrega.status] || entrega.status}
                       </Badge>
                     </TableCell>
+                    <TableCell>
+                      {entrega.motoristaName || '-'}
+                    </TableCell>
                     <TableCell className="text-right">
-                      {entrega.status === "aguardando_motorista" && (
+                      <div className="flex items-center justify-end gap-2">
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleDelete(entrega.id, entrega.status, entrega.viagemId)}
+                          onClick={() => setSelectedEntregaId(entrega.id)}
+                          title="Ver detalhes"
                         >
-                          <Trash2 className="h-4 w-4 text-destructive" />
+                          <Eye className="h-4 w-4" />
                         </Button>
-                      )}
+                        {entrega.status === "aguardando_motorista" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDelete(entrega.id, entrega.status, entrega.viagemId)}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -482,7 +649,16 @@ export default function EntregasIntermunicipais() {
 
       {/* Dialog para nova entrega */}
       <Dialog open={isDialogOpen} onOpenChange={handleCloseDialog}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent
+          className="max-w-4xl max-h-[90vh] overflow-y-auto"
+          onInteractOutside={(e) => {
+            // Não fechar o modal quando clicar no dropdown do Google Autocomplete
+            const target = e.target as HTMLElement;
+            if (target.closest('.pac-container')) {
+              e.preventDefault();
+            }
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Agendar Nova Entrega Intermunicipal</DialogTitle>
             <DialogDescription>
@@ -523,11 +699,60 @@ export default function EntregasIntermunicipais() {
                   control={form.control}
                   name="dataAgendada"
                   render={({ field }) => (
-                    <FormItem>
+                    <FormItem className="flex flex-col">
                       <FormLabel>Data da Entrega</FormLabel>
-                      <FormControl>
-                        <Input type="date" {...field} />
-                      </FormControl>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <FormControl>
+                            <Button
+                              variant="outline"
+                              className={cn(
+                                "w-full pl-3 text-left font-normal",
+                                !field.value && "text-muted-foreground"
+                              )}
+                            >
+                              {field.value ? (
+                                format(new Date(field.value), "PPP", { locale: ptBR })
+                              ) : (
+                                <span>Selecione a data</span>
+                              )}
+                              <Calendar className="ml-auto h-4 w-4 opacity-50" />
+                            </Button>
+                          </FormControl>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0" align="start">
+                          <CalendarComponent
+                            mode="single"
+                            selected={field.value ? new Date(field.value) : undefined}
+                            onSelect={(date) => {
+                              field.onChange(date ? format(date, "yyyy-MM-dd") : "");
+                            }}
+                            disabled={(date) => {
+                              // Desabilitar datas passadas
+                              const hoje = new Date();
+                              hoje.setHours(0, 0, 0, 0);
+                              if (date < hoje) return true;
+
+                              // Se tem rota selecionada, desabilitar dias que não estão no diasSemana
+                              if (rotaSelecionada?.diasSemana) {
+                                // getDay() retorna 0=Dom, 1=Seg, ..., 6=Sab
+                                // Converter para 1=Seg, 2=Ter, ..., 7=Dom
+                                const diaSemana = date.getDay() === 0 ? 7 : date.getDay();
+                                return !rotaSelecionada.diasSemana.includes(diaSemana);
+                              }
+
+                              return false;
+                            }}
+                            locale={ptBR}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                      {rotaSelecionada?.diasSemana && (
+                        <FormDescription>
+                          Rota disponível {getDiasSemanaTexto(rotaSelecionada.diasSemana)}
+                        </FormDescription>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )}
@@ -536,51 +761,98 @@ export default function EntregasIntermunicipais() {
 
               {/* Informações da rota selecionada */}
               {rotaSelecionada && (
-                <div className="bg-muted p-4 rounded-lg">
-                  <div className="flex items-start gap-2">
-                    <MapPin className="h-5 w-5 mt-0.5" />
-                    <div className="flex-1">
+                <div className="p-4 border rounded-lg bg-muted/30">
+                  <div className="mb-3">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4 text-muted-foreground" />
                       <p className="text-sm font-medium">
                         {rotaSelecionada.cidadeOrigemNome} → {rotaSelecionada.cidadeDestinoNome}
                       </p>
-                      <p className="text-sm text-muted-foreground">
-                        Distância: {rotaSelecionada.distanciaKm} km •
-                        Tempo médio: {rotaSelecionada.tempoMedioMinutos} min
-                      </p>
                     </div>
+                  </div>
+
+                  <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-2">
+                      <Ruler className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Distância</p>
+                        <p className="font-semibold">{parseFloat(rotaSelecionada.distanciaKm).toFixed(1)} km</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-muted-foreground" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Tempo médio</p>
+                        <p className="font-semibold">{rotaSelecionada.tempoMedioMinutos} min</p>
+                      </div>
+                    </div>
+
+                    {(() => {
+                      const precoSelecionado = precos.find(p => p.id === form.watch("precoId"));
+                      if (precoSelecionado) {
+                        const basePrice = parseFloat(precoSelecionado.basePrice);
+                        const pricePerDistance = parseFloat(precoSelecionado.pricePerDistance);
+                        const distancia = parseFloat(rotaSelecionada.distanciaKm);
+                        const valorTotal = basePrice + (pricePerDistance * distancia);
+
+                        return (
+                          <div className="flex items-center gap-2">
+                            <div>
+                              <p className="text-xs text-muted-foreground">Valor Total</p>
+                              <p className="font-semibold text-green-600">
+                                {new Intl.NumberFormat("pt-BR", {
+                                  style: "currency",
+                                  currency: "BRL",
+                                }).format(valorTotal)}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 </div>
               )}
 
               {/* Categoria/Preço */}
-              {selectedRota && precos.length > 0 && (
-                <FormField
-                  control={form.control}
-                  name="precoId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Categoria do Veículo</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Selecione a categoria" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {precos.map((preco) => (
-                            <SelectItem key={preco.id} value={preco.id}>
-                              {preco.vehicleTypeName} - R$ {preco.basePrice} + R$ {preco.pricePerDistance}/km
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormDescription>
-                        O valor final será calculado automaticamente
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              {selectedRota && (
+                precos.length > 0 ? (
+                  <FormField
+                    control={form.control}
+                    name="precoId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Categoria do Veículo</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Selecione a categoria" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {precos.map((preco) => (
+                              <SelectItem key={preco.id} value={preco.id}>
+                                {preco.vehicleTypeName}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          O valor final será calculado automaticamente
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : (
+                  <div className="p-4 border border-orange-200 bg-orange-50 rounded-lg">
+                    <p className="text-sm text-orange-800">
+                      ⚠️ Não há preços configurados para esta rota. Entre em contato com o administrador para configurar as categorias de veículos e preços.
+                    </p>
+                  </div>
+                )
               )}
 
               {/* Endereço de Coleta */}
@@ -671,137 +943,206 @@ export default function EntregasIntermunicipais() {
                 </div>
               </div>
 
-              {/* Endereço de Entrega */}
+              {/* Endereços de Entrega */}
               <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Endereço de Entrega</h3>
-
-                <div className="grid grid-cols-3 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="enderecoEntregaLogradouro"
-                    render={({ field }) => (
-                      <FormItem className="col-span-2">
-                        <FormLabel>Logradouro</FormLabel>
-                        <FormControl>
-                          <Input
-                            placeholder="Rua, Avenida, etc..."
-                            {...field}
-                            ref={enderecoEntregaInputRef}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="enderecoEntregaNumero"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Número</FormLabel>
-                        <FormControl>
-                          <Input placeholder="123" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Endereços de Entrega</h3>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      append({
+                        logradouro: "",
+                        numero: "",
+                        bairro: "",
+                        cidade: "",
+                        cep: "",
+                        pontoReferencia: "",
+                        destinatarioNome: "",
+                        destinatarioTelefone: "",
+                      });
+                      // Abrir o accordion do novo endereço
+                      setAccordionValue(`${fields.length}`);
+                    }}
+                  >
+                    <PlusCircle className="h-4 w-4 mr-2" />
+                    Adicionar Endereço
+                  </Button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="enderecoEntregaBairro"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Bairro</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Nome do bairro" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                <Accordion type="single" collapsible value={accordionValue} onValueChange={setAccordionValue}>
+                  {fields.map((field, index) => (
+                    <AccordionItem key={field.id} value={`${index}`}>
+                      <AccordionTrigger className="hover:no-underline">
+                        <div className="flex items-center justify-between w-full pr-4">
+                          <span className="font-medium">
+                            {form.watch(`enderecosEntrega.${index}.logradouro`) || `Endereço ${index + 1}`}
+                          </span>
+                          {fields.length > 1 && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                remove(index);
+                                // Se remover o endereço atual, abrir o primeiro
+                                if (accordionValue === `${index}`) {
+                                  setAccordionValue("0");
+                                }
+                              }}
+                              className="text-red-600 hover:text-red-700"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-4 pt-4">
+                          {/* Endereço */}
+                          <div className="grid grid-cols-3 gap-4">
+                            <FormField
+                              control={form.control}
+                              name={`enderecosEntrega.${index}.logradouro`}
+                              render={({ field }) => (
+                                <FormItem className="col-span-2">
+                                  <FormLabel>Logradouro</FormLabel>
+                                  <input
+                                    type="text"
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                                    placeholder="Rua, Avenida, etc..."
+                                    value={field.value}
+                                    onChange={field.onChange}
+                                    onBlur={field.onBlur}
+                                    name={field.name}
+                                    ref={(el) => {
+                                      enderecoInputsRef.current[index] = el;
+                                      // Inicializar autocomplete quando o elemento estiver pronto
+                                      if (el && window.google?.maps?.places && !autocompletesRef.current[index]) {
+                                        setTimeout(() => initializeAutocomplete(index), 100);
+                                      }
+                                    }}
+                                  />
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
 
-                  <FormField
-                    control={form.control}
-                    name="enderecoEntregaCidade"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Cidade</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Nome da cidade" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+                            <FormField
+                              control={form.control}
+                              name={`enderecosEntrega.${index}.numero`}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Número</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="123" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="enderecoEntregaCep"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>CEP</FormLabel>
-                        <FormControl>
-                          <Input placeholder="00000-000" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                          <div className="grid grid-cols-2 gap-4">
+                            <FormField
+                              control={form.control}
+                              name={`enderecosEntrega.${index}.bairro`}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Bairro</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="Nome do bairro" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
 
-                  <FormField
-                    control={form.control}
-                    name="enderecoEntregaPontoReferencia"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Ponto de Referência (Opcional)</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Ex: Próximo ao mercado" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              </div>
+                            <FormField
+                              control={form.control}
+                              name={`enderecosEntrega.${index}.cidade`}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Cidade</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="Nome da cidade" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
 
-              {/* Dados do Destinatário */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Dados do Destinatário</h3>
-                <div className="grid grid-cols-2 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="destinatarioNome"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Nome</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Nome completo" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                          <div className="grid grid-cols-2 gap-4">
+                            <FormField
+                              control={form.control}
+                              name={`enderecosEntrega.${index}.cep`}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>CEP</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="00000-000" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
 
-                  <FormField
-                    control={form.control}
-                    name="destinatarioTelefone"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Telefone</FormLabel>
-                        <FormControl>
-                          <Input placeholder="(00) 00000-0000" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
+                            <FormField
+                              control={form.control}
+                              name={`enderecosEntrega.${index}.pontoReferencia`}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Ponto de Referência (Opcional)</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="Ex: Próximo ao mercado" {...field} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          {/* Dados do Destinatário */}
+                          <div className="pt-4 border-t">
+                            <h4 className="text-sm font-semibold mb-4">Dados do Destinatário</h4>
+                            <div className="grid grid-cols-2 gap-4">
+                              <FormField
+                                control={form.control}
+                                name={`enderecosEntrega.${index}.destinatarioNome`}
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>Nome</FormLabel>
+                                    <FormControl>
+                                      <Input placeholder="Nome completo" {...field} />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+
+                              <FormField
+                                control={form.control}
+                                name={`enderecosEntrega.${index}.destinatarioTelefone`}
+                                render={({ field }) => (
+                                  <FormItem>
+                                    <FormLabel>Telefone</FormLabel>
+                                    <FormControl>
+                                      <Input placeholder="(00) 00000-0000" {...field} />
+                                    </FormControl>
+                                    <FormMessage />
+                                  </FormItem>
+                                )}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
               </div>
 
               {/* Informações do Pacote */}
@@ -878,6 +1219,137 @@ export default function EntregasIntermunicipais() {
               </DialogFooter>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL DE DETALHES DA ENTREGA */}
+      <Dialog open={!!selectedEntregaId} onOpenChange={(open) => !open && setSelectedEntregaId(null)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Detalhes da Entrega</DialogTitle>
+            <DialogDescription>
+              Informações completas sobre a entrega intermunicipal
+            </DialogDescription>
+          </DialogHeader>
+
+          {loadingDetalhes ? (
+            <div className="text-center py-10">Carregando detalhes...</div>
+          ) : entregaDetalhes ? (
+            <div className="space-y-6">
+              {/* INFORMAÇÕES PRINCIPAIS */}
+              <div className="border-b pb-4 space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Número do Pedido</label>
+                  <p className="text-2xl font-bold">{entregaDetalhes.numeroPedido}</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Status</label>
+                    <div className="mt-2">
+                      <Badge variant={statusColors[entregaDetalhes.status] as any} className="text-base px-3 py-1">
+                        {statusLabels[entregaDetalhes.status]}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-muted-foreground">Rota</label>
+                    <p className="flex items-center gap-2 mt-2 text-base font-semibold">
+                      <MapPin className="h-5 w-5 text-blue-600" />
+                      {entregaDetalhes.rotaNome}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* INFORMAÇÕES SECUNDÁRIAS */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Data Agendada</label>
+                  <p className="flex items-center gap-2 mt-1">
+                    <Calendar className="h-4 w-4 text-muted-foreground" />
+                    {format(new Date(entregaDetalhes.dataAgendada), "dd/MM/yyyy", { locale: ptBR })}
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Valor Total</label>
+                  <p className="text-lg font-semibold text-green-600">
+                    R$ {parseFloat(entregaDetalhes.valorTotal).toFixed(2)}
+                  </p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground">Pacotes/Peso</label>
+                  <p className="mt-1">
+                    {entregaDetalhes.quantidadePacotes} pacote(s) / {entregaDetalhes.pesoTotalKg} kg
+                  </p>
+                </div>
+              </div>
+
+              {/* INFORMAÇÕES DO MOTORISTA */}
+              {entregaDetalhes.entregador && (
+                <div className="border rounded-lg p-4 bg-muted/50">
+                  <h3 className="font-semibold mb-3 flex items-center gap-2">
+                    <User className="h-5 w-5" />
+                    Motorista
+                  </h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-sm font-medium text-muted-foreground">Nome</label>
+                      <p className="mt-1">{entregaDetalhes.entregador.name}</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-muted-foreground">Telefone</label>
+                      <p className="flex items-center gap-2 mt-1">
+                        <Phone className="h-4 w-4 text-muted-foreground" />
+                        {entregaDetalhes.entregador.phone}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ENDEREÇO DE COLETA */}
+              <div className="border rounded-lg p-4">
+                <h3 className="font-semibold mb-2 flex items-center gap-2">
+                  <MapPin className="h-5 w-5 text-blue-600" />
+                  Endereço de Coleta
+                </h3>
+                <p className="text-sm">{entregaDetalhes.enderecoColetaCompleto}</p>
+              </div>
+
+              {/* PARADAS DE ENTREGA */}
+              <div className="border rounded-lg p-4">
+                <h3 className="font-semibold mb-3 flex items-center gap-2">
+                  <Package className="h-5 w-5 text-green-600" />
+                  Paradas de Entrega ({entregaDetalhes.paradas.length})
+                </h3>
+                <div className="space-y-4">
+                  {entregaDetalhes.paradas.sort((a, b) => a.ordem - b.ordem).map((parada) => (
+                    <div key={parada.id} className="border-l-4 border-green-500 pl-4 py-2 bg-muted/30 rounded-r">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <p className="font-semibold">Parada {parada.ordem} - {parada.destinatarioNome}</p>
+                          <p className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
+                            <Phone className="h-3 w-3" />
+                            {parada.destinatarioTelefone}
+                          </p>
+                        </div>
+                      </div>
+                      <p className="flex items-start gap-2 text-sm mt-2">
+                        <MapPin className="h-4 w-4 text-muted-foreground mt-0.5" />
+                        {parada.enderecoCompleto}
+                      </p>
+                      {parada.observacoes && (
+                        <p className="text-sm text-muted-foreground mt-2 italic">
+                          Obs: {parada.observacoes}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>
