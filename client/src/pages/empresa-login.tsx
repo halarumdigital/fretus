@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff, Lock, Mail, Loader2, Building2 } from "lucide-react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 
 interface CompanyLoginResponse {
   message: string;
@@ -194,7 +194,13 @@ export default function EmpresaLogin() {
               </Button>
             </form>
 
-            <div className="mt-6 pt-6 border-t border-border">
+            <div className="mt-6 pt-6 border-t border-border space-y-4">
+              <p className="text-center text-sm text-muted-foreground">
+                Ainda não tem uma conta?{" "}
+                <Link href="/empresa/register" className="text-primary font-medium hover:underline">
+                  Cadastre sua empresa
+                </Link>
+              </p>
               <p className="text-center text-sm text-muted-foreground">
                 Problemas para acessar?{" "}
                 <span className="text-primary font-medium">

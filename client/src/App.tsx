@@ -31,6 +31,7 @@ import MotoristasAguardando from "@/pages/motoristas-aguardando";
 import Configuracoes from "@/pages/configuracoes";
 import Register from "@/pages/register";
 import EmpresaLogin from "@/pages/empresa-login";
+import EmpresaRegister from "@/pages/empresa-register";
 import EmpresaDashboard from "@/pages/empresa-dashboard";
 import EmpresaEntregas from "@/pages/empresa-entregas";
 import EmpresaEntregasEmAndamento from "@/pages/empresa-entregas-em-andamento";
@@ -47,8 +48,8 @@ import NotFound from "@/pages/not-found";
 function Router() {
   const [location] = useLocation();
   const isAuthPage = location === "/" || location === "/register" || location === "/forgot-password";
-  const isEmpresaAuthPage = location === "/empresa";
-  const isEmpresaPage = location.startsWith("/empresa/");
+  const isEmpresaAuthPage = location === "/empresa" || location === "/empresa/register";
+  const isEmpresaPage = location.startsWith("/empresa/") && !isEmpresaAuthPage;
 
   // Auth pages (admin login and register)
   if (isAuthPage) {
@@ -61,11 +62,12 @@ function Router() {
     );
   }
 
-  // Empresa login page
+  // Empresa auth pages (login and register)
   if (isEmpresaAuthPage) {
     return (
       <Switch>
         <Route path="/empresa" component={EmpresaLogin} />
+        <Route path="/empresa/register" component={EmpresaRegister} />
         <Route component={NotFound} />
       </Switch>
     );

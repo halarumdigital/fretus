@@ -24,13 +24,15 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Save, Users, DollarSign } from "lucide-react";
+import { Save, Users, DollarSign, Building2 } from "lucide-react";
 
 // Schema para configurações de indicação
 const referralSettingsSchema = z.object({
   minimumDeliveries: z.number().int().min(1, "Mínimo de entregas deve ser maior que 0"),
   commissionAmount: z.number().min(0, "Valor da comissão deve ser maior ou igual a 0"),
   enabled: z.boolean(),
+  companyMinimumDeliveries: z.number().int().min(1, "Mínimo de entregas de empresa deve ser maior que 0"),
+  companyCommissionAmount: z.number().min(0, "Valor da comissão de empresa deve ser maior ou igual a 0"),
 });
 
 type ReferralSettingsForm = z.infer<typeof referralSettingsSchema>;
@@ -49,6 +51,8 @@ export function ReferralSettings() {
       minimumDeliveries: 10,
       commissionAmount: 50.00,
       enabled: true,
+      companyMinimumDeliveries: 20,
+      companyCommissionAmount: 100.00,
     },
   });
 
@@ -61,6 +65,10 @@ export function ReferralSettings() {
           ? parseFloat(settings.commissionAmount)
           : settings.commissionAmount,
         enabled: settings.enabled,
+        companyMinimumDeliveries: settings.companyMinimumDeliveries,
+        companyCommissionAmount: typeof settings.companyCommissionAmount === 'string'
+          ? parseFloat(settings.companyCommissionAmount)
+          : settings.companyCommissionAmount,
       });
     }
   }, [settings, form]);
@@ -183,6 +191,68 @@ export function ReferralSettings() {
                       </FormItem>
                     )}
                   />
+
+                  {/* Seção de Indicação de Empresas */}
+                  <div className="pt-6 mt-6 border-t">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Building2 className="h-5 w-5 text-primary" />
+                      <h3 className="text-lg font-semibold">Indicação de Empresas</h3>
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Configure as regras para quando entregadores indicarem empresas
+                    </p>
+
+                    <div className="space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="companyMinimumDeliveries"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Mínimo de Entregas da Empresa</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                placeholder="20"
+                                value={field.value}
+                                onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              Número mínimo de entregas que a empresa indicada precisa completar para o entregador ganhar a comissão
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="companyCommissionAmount"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Valor da Comissão por Empresa (R$)</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="100.00"
+                                  className="pl-10"
+                                  value={field.value}
+                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                />
+                              </div>
+                            </FormControl>
+                            <FormDescription>
+                              Valor que o entregador receberá quando a empresa indicada atingir o mínimo de entregas
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </div>
                 </>
               )}
 
@@ -196,39 +266,6 @@ export function ReferralSettings() {
           </Form>
         </CardContent>
       </Card>
-
-      {/* Card informativo sobre o funcionamento */}
-      {form.watch("enabled") && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Como funciona o sistema de indicação?</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3 text-sm text-muted-foreground">
-              <div className="flex gap-2">
-                <span className="font-semibold text-primary">1.</span>
-                <p>Cada entregador cadastrado recebe um código único de indicação (nome + 2 dígitos)</p>
-              </div>
-              <div className="flex gap-2">
-                <span className="font-semibold text-primary">2.</span>
-                <p>O entregador compartilha seu código com amigos interessados em trabalhar como entregadores</p>
-              </div>
-              <div className="flex gap-2">
-                <span className="font-semibold text-primary">3.</span>
-                <p>No cadastro, o novo entregador insere o código de quem o indicou</p>
-              </div>
-              <div className="flex gap-2">
-                <span className="font-semibold text-primary">4.</span>
-                <p>Quando o indicado completar {form.watch("minimumDeliveries")} entregas, quem indicou ganha R$ {form.watch("commissionAmount").toFixed(2)}</p>
-              </div>
-              <div className="flex gap-2">
-                <span className="font-semibold text-primary">5.</span>
-                <p>O sistema registra automaticamente quando a meta é atingida e libera a comissão para pagamento</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }

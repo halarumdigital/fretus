@@ -2,7 +2,7 @@ import express, { type Express } from "express";
 import { createServer, type Server } from "http";
 import { Server as SocketIOServer } from "socket.io";
 import { storage } from "./storage";
-import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings, driverCompanyRatings, deliveryStops, faqs, insertFaqSchema, pushNotifications, referralSettings, driverReferrals, ticketSubjects, insertTicketSubjectSchema, supportTickets, insertSupportTicketSchema, ticketReplies, insertTicketReplySchema, entregadorRotas, entregasIntermunicipais, rotasIntermunicipais, viagemColetas, viagemEntregas } from "@shared/schema";
+import { loginSchema, insertSettingsSchema, serviceLocations, vehicleTypes, brands, vehicleModels, driverDocumentTypes, driverDocuments, drivers, companies, requests, requestPlaces, requestBills, driverNotifications, cityPrices, settings, companyCancellationTypes, insertCompanyCancellationTypeSchema, promotions, insertPromotionSchema, companyDriverRatings, driverCompanyRatings, deliveryStops, faqs, insertFaqSchema, pushNotifications, referralSettings, driverReferrals, companyReferrals, ticketSubjects, insertTicketSubjectSchema, supportTickets, insertSupportTicketSchema, ticketReplies, insertTicketReplySchema, entregadorRotas, entregasIntermunicipais, rotasIntermunicipais, viagemColetas, viagemEntregas } from "@shared/schema";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { pool, db } from "./db";
@@ -564,6 +564,118 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
     } catch (error) {
       console.error("Erro ao buscar dados da empresa:", error);
       return res.status(500).json({ message: "Erro ao buscar dados da empresa" });
+    }
+  });
+
+  // POST /api/empresa/auth/register - Registrar nova empresa
+  app.post("/api/empresa/auth/register", async (req, res) => {
+    try {
+      console.log("📝 Tentativa de registro de nova empresa");
+
+      const { name, email, password, cnpj, phone, referralCode, ...addressData } = req.body;
+
+      // Validação básica
+      if (!name || !email || !password) {
+        return res.status(400).json({
+          message: "Nome, email e senha são obrigatórios"
+        });
+      }
+
+      // Verificar se email já existe
+      const existingCompany = await storage.getCompanyByEmail(email);
+      if (existingCompany) {
+        return res.status(400).json({
+          message: "Email já cadastrado"
+        });
+      }
+
+      let referrerDriverId: string | undefined;
+
+      // Validar código de indicação se fornecido
+      if (referralCode) {
+        console.log("🔍 Validando código de indicação:", referralCode);
+        const { validateReferralCode } = await import("./utils/referralUtils.js");
+        const validation = await validateReferralCode(referralCode);
+
+        if (!validation.valid) {
+          return res.status(400).json({
+            message: validation.message || "Código de indicação inválido"
+          });
+        }
+
+        referrerDriverId = validation.driver?.id;
+        console.log("✅ Código válido! Motorista indicador:", validation.driver?.name);
+      }
+
+      // Hash da senha
+      console.log("🔐 Gerando hash da senha...");
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      // Criar empresa
+      console.log("💾 Criando empresa no banco...");
+      const newCompany = await db
+        .insert(companies)
+        .values({
+          name,
+          email,
+          password: hashedPassword,
+          cnpj: cnpj || null,
+          phone: phone || null,
+          referredByDriverId: referrerDriverId || null,
+          ...addressData,
+          active: true,
+        })
+        .returning();
+
+      const company = newCompany[0];
+      console.log("✅ Empresa criada:", company.name);
+
+      // Se houve indicação, criar registro de indicação
+      if (referrerDriverId && company) {
+        console.log("💰 Criando registro de indicação de empresa...");
+
+        // Buscar configurações
+        const settings = await db
+          .select()
+          .from(referralSettings)
+          .limit(1);
+
+        const currentSettings = settings[0] || {
+          companyMinimumDeliveries: 20,
+          companyCommissionAmount: "100.00"
+        };
+
+        await db.insert(companyReferrals).values({
+          referrerDriverId,
+          companyId: company.id,
+          requiredDeliveries: currentSettings.companyMinimumDeliveries,
+          commissionAmount: currentSettings.companyCommissionAmount,
+          completedDeliveries: 0,
+          status: "pending",
+        });
+
+        console.log("✅ Registro de indicação criado com sucesso!");
+      }
+
+      // Fazer login automático
+      req.session.companyId = company.id;
+      req.session.companyEmail = company.email;
+      req.session.companyName = company.name;
+      req.session.isCompany = true;
+
+      return res.json({
+        message: "Empresa registrada com sucesso",
+        company: {
+          id: company.id,
+          name: company.name,
+          email: company.email,
+        }
+      });
+    } catch (error) {
+      console.error("❌ Erro ao registrar empresa:", error);
+      return res.status(500).json({
+        message: "Erro interno do servidor"
+      });
     }
   });
 
@@ -1588,7 +1700,8 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
   // GET /api/drivers/:id/referrals - Buscar indicações de um motorista
   app.get("/api/drivers/:id/referrals", async (req, res) => {
     try {
-      if (!req.session.userId) {
+      // Verifica se é motorista autenticado ou admin
+      if (!req.session.driverId && !req.session.userId) {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
@@ -1698,7 +1811,8 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
   // GET /api/drivers/:id/commissions - Buscar comissões de um motorista
   app.get("/api/drivers/:id/commissions", async (req, res) => {
     try {
-      if (!req.session.userId) {
+      // Verifica se é motorista autenticado ou admin
+      if (!req.session.driverId && !req.session.userId) {
         return res.status(401).json({ message: "Não autenticado" });
       }
 
@@ -1745,6 +1859,206 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
     } catch (error) {
       console.error("Erro ao buscar comissões:", error);
       return res.status(500).json({ message: "Erro ao buscar comissões" });
+    }
+  });
+
+  // ========================================
+  // INDICAÇÕES DE EMPRESAS (COMPANY REFERRALS)
+  // ========================================
+
+  // GET /api/drivers/:id/company-referrals - Lista empresas indicadas pelo motorista
+  app.get("/api/drivers/:id/company-referrals", async (req, res) => {
+    try {
+      // Verifica se é motorista autenticado ou admin
+      if (!req.session.driverId && !req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      // Buscar todas as empresas indicadas por este motorista
+      const referrals = await db
+        .select({
+          id: companyReferrals.id,
+          companyId: companyReferrals.companyId,
+          companyName: companies.name,
+          companyEmail: companies.email,
+          companyPhone: companies.phone,
+          requiredDeliveries: companyReferrals.requiredDeliveries,
+          completedDeliveries: companyReferrals.completedDeliveries,
+          commissionAmount: companyReferrals.commissionAmount,
+          status: companyReferrals.status,
+          qualifiedAt: companyReferrals.qualifiedAt,
+          paidAt: companyReferrals.paidAt,
+          createdAt: companyReferrals.createdAt,
+        })
+        .from(companyReferrals)
+        .leftJoin(companies, eq(companyReferrals.companyId, companies.id))
+        .where(eq(companyReferrals.referrerDriverId, id))
+        .orderBy(desc(companyReferrals.createdAt));
+
+      return res.json({ referrals });
+    } catch (error) {
+      console.error("Erro ao buscar empresas indicadas:", error);
+      return res.status(500).json({ message: "Erro ao buscar empresas indicadas" });
+    }
+  });
+
+  // GET /api/drivers/:id/company-referral-stats - Estatísticas de empresas indicadas
+  app.get("/api/drivers/:id/company-referral-stats", async (req, res) => {
+    try {
+      // Verifica se é motorista autenticado ou admin
+      if (!req.session.driverId && !req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      // Buscar todas as empresas indicadas
+      const referrals = await db
+        .select({
+          status: companyReferrals.status,
+          commissionAmount: companyReferrals.commissionAmount,
+          completedDeliveries: companyReferrals.completedDeliveries,
+          requiredDeliveries: companyReferrals.requiredDeliveries,
+        })
+        .from(companyReferrals)
+        .where(eq(companyReferrals.referrerDriverId, id));
+
+      // Calcular estatísticas
+      const stats = {
+        total: referrals.length,
+        pending: referrals.filter(r => r.status === 'pending').length,
+        qualified: referrals.filter(r => r.status === 'qualified').length,
+        paid: referrals.filter(r => r.status === 'paid').length,
+        totalEarned: referrals
+          .filter(r => r.status === 'qualified' || r.status === 'paid')
+          .reduce((sum, r) => sum + parseFloat(r.commissionAmount || '0'), 0),
+        totalPaid: referrals
+          .filter(r => r.status === 'paid')
+          .reduce((sum, r) => sum + parseFloat(r.commissionAmount || '0'), 0),
+        totalPending: referrals
+          .filter(r => r.status === 'qualified')
+          .reduce((sum, r) => sum + parseFloat(r.commissionAmount || '0'), 0),
+      };
+
+      return res.json({ stats });
+    } catch (error) {
+      console.error("Erro ao buscar estatísticas:", error);
+      return res.status(500).json({ message: "Erro ao buscar estatísticas" });
+    }
+  });
+
+  // PUT /api/company-referrals/:id/pay - Marcar comissão de empresa como paga (ADMIN)
+  app.put("/api/company-referrals/:id/pay", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      const { id } = req.params;
+
+      // Buscar a comissão
+      const [referral] = await db
+        .select()
+        .from(companyReferrals)
+        .where(eq(companyReferrals.id, id))
+        .limit(1);
+
+      if (!referral) {
+        return res.status(404).json({ message: "Indicação de empresa não encontrada" });
+      }
+
+      if (referral.status !== 'qualified') {
+        return res.status(400).json({ message: "Comissão não está qualificada para pagamento" });
+      }
+
+      // Atualizar status para pago
+      const [updatedReferral] = await db
+        .update(companyReferrals)
+        .set({
+          status: 'paid',
+          paidAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(companyReferrals.id, id))
+        .returning();
+
+      console.log(`✅ Comissão de empresa marcada como paga: ${id}`);
+      return res.json(updatedReferral);
+    } catch (error) {
+      console.error("Erro ao marcar comissão de empresa como paga:", error);
+      return res.status(500).json({ message: "Erro ao processar pagamento" });
+    }
+  });
+
+  // GET /api/company-referrals - Listar todas as indicações de empresas (ADMIN)
+  app.get("/api/company-referrals", async (req, res) => {
+    try {
+      if (!req.session.userId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      // Buscar configurações
+      const [settings] = await db
+        .select()
+        .from(referralSettings)
+        .limit(1);
+
+      const companyDeliveriesRequired = settings?.companyMinimumDeliveries || 20;
+      const companyCommissionAmount = settings?.companyCommissionAmount || "100.00";
+
+      // Buscar todas as indicações de empresas com dados do motorista e empresa
+      const referrals = await db
+        .select({
+          id: companyReferrals.id,
+          referrerDriverId: companyReferrals.referrerDriverId,
+          companyId: companyReferrals.companyId,
+          requiredDeliveries: companyReferrals.requiredDeliveries,
+          completedDeliveries: companyReferrals.completedDeliveries,
+          commissionAmount: companyReferrals.commissionAmount,
+          status: companyReferrals.status,
+          qualifiedAt: companyReferrals.qualifiedAt,
+          paidAt: companyReferrals.paidAt,
+          createdAt: companyReferrals.createdAt,
+          // Dados do motorista
+          driverName: drivers.name,
+          driverPhone: drivers.phone,
+          // Dados da empresa
+          companyName: companies.name,
+          companyCnpj: companies.cnpj,
+          companyEmail: companies.email,
+        })
+        .from(companyReferrals)
+        .leftJoin(drivers, eq(companyReferrals.referrerDriverId, drivers.id))
+        .leftJoin(companies, eq(companyReferrals.companyId, companies.id))
+        .orderBy(desc(companyReferrals.createdAt));
+
+      // Estatísticas gerais
+      const stats = {
+        total: referrals.length,
+        pending: referrals.filter(r => r.status === 'pending').length,
+        qualified: referrals.filter(r => r.status === 'qualified').length,
+        paid: referrals.filter(r => r.status === 'paid').length,
+        totalCommissionsQualified: referrals
+          .filter(r => r.status === 'qualified')
+          .reduce((sum, r) => sum + parseFloat(r.commissionAmount || '0'), 0),
+        totalCommissionsPaid: referrals
+          .filter(r => r.status === 'paid')
+          .reduce((sum, r) => sum + parseFloat(r.commissionAmount || '0'), 0),
+      };
+
+      return res.json({
+        referrals,
+        stats,
+        settings: {
+          companyDeliveriesRequired,
+          companyCommissionAmount,
+        }
+      });
+    } catch (error) {
+      console.error("Erro ao listar indicações de empresas:", error);
+      return res.status(500).json({ message: "Erro ao listar indicações" });
     }
   });
 
@@ -9145,6 +9459,95 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
     }
   });
 
+  // GET /api/v1/driver/my-company-referrals - Buscar minhas indicações de empresas (para o app)
+  app.get("/api/v1/driver/my-company-referrals", async (req, res) => {
+    try {
+      // Usa a função helper para obter driverId da sessão ou token Bearer
+      const driverId = getDriverIdFromRequest(req);
+
+      if (!driverId) {
+        return res.status(401).json({ message: "Não autenticado" });
+      }
+
+      // Buscar todas as empresas indicadas por este motorista
+      const referrals = await db
+        .select({
+          id: companyReferrals.id,
+          companyId: companyReferrals.companyId,
+          companyName: companies.name,
+          companyEmail: companies.email,
+          companyPhone: companies.phone,
+          requiredDeliveries: companyReferrals.requiredDeliveries,
+          completedDeliveries: companyReferrals.completedDeliveries,
+          commissionAmount: companyReferrals.commissionAmount,
+          status: companyReferrals.status,
+          qualifiedAt: companyReferrals.qualifiedAt,
+          paidAt: companyReferrals.paidAt,
+          createdAt: companyReferrals.createdAt,
+        })
+        .from(companyReferrals)
+        .leftJoin(companies, eq(companyReferrals.companyId, companies.id))
+        .where(eq(companyReferrals.referrerDriverId, driverId))
+        .orderBy(desc(companyReferrals.createdAt));
+
+      // Calcular estatísticas
+      const totalReferrals = referrals.length;
+      const pendingReferrals = referrals.filter(r => r.status === 'pending').length;
+      const qualifiedReferrals = referrals.filter(r => r.status === 'qualified').length;
+      const paidReferrals = referrals.filter(r => r.status === 'paid').length;
+
+      const totalCommissionEarned = referrals
+        .filter(r => r.status === 'qualified' || r.status === 'paid')
+        .reduce((sum, r) => sum + parseFloat(r.commissionAmount || '0'), 0);
+
+      const totalCommissionPaid = referrals
+        .filter(r => r.status === 'paid')
+        .reduce((sum, r) => sum + parseFloat(r.commissionAmount || '0'), 0);
+
+      // Buscar o código de indicação do motorista
+      const [driver] = await db
+        .select({ referralCode: drivers.referralCode })
+        .from(drivers)
+        .where(eq(drivers.id, driverId))
+        .limit(1);
+
+      // Buscar configurações de indicação de empresas
+      const [settings] = await db
+        .select()
+        .from(referralSettings)
+        .limit(1);
+
+      const companyMinimumDeliveries = settings?.companyMinimumDeliveries || 20;
+      const companyCommissionAmount = settings?.companyCommissionAmount || "100.00";
+
+      return res.json({
+        success: true,
+        data: {
+          myReferralCode: driver?.referralCode || null,
+          settings: {
+            companyMinimumDeliveries: companyMinimumDeliveries,
+            companyCommissionAmount: typeof companyCommissionAmount === 'string'
+              ? parseFloat(companyCommissionAmount)
+              : companyCommissionAmount,
+          },
+          referrals: referrals,
+          stats: {
+            totalReferrals,
+            pendingReferrals,
+            qualifiedReferrals,
+            paidReferrals,
+            totalCommissionEarned,
+            totalCommissionPaid,
+            totalCommissionPending: totalCommissionEarned - totalCommissionPaid
+          }
+        }
+      });
+    } catch (error) {
+      console.error("Erro ao buscar empresas indicadas:", error);
+      return res.status(500).json({ message: "Erro ao buscar empresas indicadas" });
+    }
+  });
+
   // GET /api/v1/driver/profile - Buscar perfil do motorista logado
   app.get("/api/v1/driver/profile", async (req, res) => {
     try {
@@ -11394,6 +11797,16 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
               completedAt: new Date(),
             });
 
+            // Verificar e atualizar indicações de empresas (se aplicável)
+            if (request.companyId) {
+              const { updateCompanyReferralProgress } = await import("./utils/referralUtils.js");
+              const companyReferralResult = await updateCompanyReferralProgress(request.companyId);
+
+              if (companyReferralResult.qualified) {
+                console.log(`🎉 Empresa ${request.companyId} atingiu a meta! Motorista indicador: ${companyReferralResult.referrerDriverId}`);
+              }
+            }
+
             // Incrementar contador mensal de entregas do motorista
             await storage.incrementDriverMonthlyDeliveries(driverId);
 
@@ -11572,6 +11985,16 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
           isCompleted: true,
           completedAt: new Date(),
         });
+
+        // Verificar e atualizar indicações de empresas (se aplicável)
+        if (request.companyId) {
+          const { updateCompanyReferralProgress } = await import("./utils/referralUtils.js");
+          const companyReferralResult = await updateCompanyReferralProgress(request.companyId);
+
+          if (companyReferralResult.qualified) {
+            console.log(`🎉 Empresa ${request.companyId} atingiu a meta! Motorista indicador: ${companyReferralResult.referrerDriverId}`);
+          }
+        }
 
         // Incrementar contador mensal de entregas do motorista
         await storage.incrementDriverMonthlyDeliveries(driverId);
@@ -11836,6 +12259,16 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
 
       // Incrementar contador APENAS se não estava completada antes
       if (!wasAlreadyCompleted) {
+        // Verificar e atualizar indicações de empresas (se aplicável)
+        if (request.companyId) {
+          const { updateCompanyReferralProgress } = await import("./utils/referralUtils.js");
+          const companyReferralResult = await updateCompanyReferralProgress(request.companyId);
+
+          if (companyReferralResult.qualified) {
+            console.log(`🎉 Empresa ${request.companyId} atingiu a meta! Motorista indicador: ${companyReferralResult.referrerDriverId}`);
+          }
+        }
+
         await storage.incrementDriverMonthlyDeliveries(driverId);
         console.log(`✅ Contador mensal incrementado para motorista ${driverId}`);
       } else {
@@ -11945,6 +12378,16 @@ export async function registerRoutes(app: Express): Promise<Server> {  // Config
 
       // Incrementar contador APENAS se não estava completada antes
       if (!wasAlreadyCompleted) {
+        // Verificar e atualizar indicações de empresas (se aplicável)
+        if (request.companyId) {
+          const { updateCompanyReferralProgress } = await import("./utils/referralUtils.js");
+          const companyReferralResult = await updateCompanyReferralProgress(request.companyId);
+
+          if (companyReferralResult.qualified) {
+            console.log(`🎉 Empresa ${request.companyId} atingiu a meta! Motorista indicador: ${companyReferralResult.referrerDriverId}`);
+          }
+        }
+
         await storage.incrementDriverMonthlyDeliveries(driverId);
         console.log(`✅ Contador mensal incrementado para motorista ${driverId}`);
 

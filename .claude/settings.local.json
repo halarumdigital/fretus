@@ -36,7 +36,11 @@
       "Bash(npm run db:push:*)",
       "Bash(npx cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev npx tsx server/add-facematch-columns.ts)",
       "Bash(npx cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev npx tsx server/test-facematch.ts)",
-      "Bash(npx tsx:*)"
+      "Bash(npx tsx:*)",
+      "Bash(npx cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev npx tsx server/migrate-company-referrals.ts)",
+      "Bash(npx cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev npx tsx server/check-company-referral.ts)",
+      "Bash(npx cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev npx tsx server/test-company-referral-endpoint.ts)",
+      "Bash(npx cross-env DATABASE_URL=postgresql://postgres:@0dJ2m0q82320@206.183.129.145:5432/fretus-dev npx tsx server/test-company-referral-response.ts)"
     ],
     "deny": [],
     "ask": []

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "../db.js";
 import { drivers } from "@shared/schema";
 
@@ -90,10 +90,10 @@ export async function checkAndProcessReferralCommission(driverId: string, totalD
     const pendingCommission = await db
       .select()
       .from(referralCommissions)
-      .where(
+      .where(and(
         eq(referralCommissions.referredDriverId, driverId),
-      )
-      .where(eq(referralCommissions.status, "pending"))
+        eq(referralCommissions.status, "pending")
+      ))
       .limit(1);
 
     if (pendingCommission.length === 0) {
@@ -168,8 +168,10 @@ export async function updateDriverReferralProgress(driverId: string, totalDelive
     const activeReferrals = await db
       .select()
       .from(driverReferrals)
-      .where(eq(driverReferrals.referredDriverId, driverId))
-      .where(eq(driverReferrals.status, "active"));
+      .where(and(
+        eq(driverReferrals.referredDriverId, driverId),
+        eq(driverReferrals.status, "active")
+      ));
 
     if (activeReferrals.length === 0) {
       return { updated: false, reason: "Sem indicações ativas" };
@@ -177,14 +179,17 @@ export async function updateDriverReferralProgress(driverId: string, totalDelive
 
     let updatedCount = 0;
 
+    const commissionAmount = currentSettings.commissionAmount;
+
     for (const referral of activeReferrals) {
       // Se já atingiu a meta e ainda não foi marcado como earned
-      if (totalDeliveries >= minimumDeliveries && !referral.commissionEarned) {
+      const hasNoCommission = !referral.commissionEarned || referral.commissionEarned === "0";
+      if (totalDeliveries >= minimumDeliveries && hasNoCommission) {
         await db
           .update(driverReferrals)
           .set({
             deliveriesCompleted: totalDeliveries,
-            commissionEarned: true,
+            commissionEarned: commissionAmount,
             updatedAt: new Date()
           })
           .where(eq(driverReferrals.id, referral.id));
@@ -208,11 +213,97 @@ export async function updateDriverReferralProgress(driverId: string, totalDelive
     return {
       updated: true,
       updatedCount,
-      qualifiedCount: activeReferrals.filter(r => totalDeliveries >= minimumDeliveries).length
+      qualifiedCount: activeReferrals.filter((r: any) => totalDeliveries >= minimumDeliveries).length
     };
 
   } catch (error) {
     console.error("Erro ao atualizar progresso de indicação:", error);
+    return { updated: false, reason: "Erro ao atualizar progresso", error };
+  }
+}
+
+/**
+ * Atualiza o progresso de indicações de empresas
+ * Verifica se a empresa atingiu a meta e marca como qualified
+ */
+export async function updateCompanyReferralProgress(companyId: string) {
+  try {
+    const { companyReferrals, referralSettings, requests } = await import("@shared/schema");
+
+    console.log("🔍 Atualizando progresso de indicação de empresa:", companyId);
+
+    // Buscar referência de indicação da empresa
+    const referral = await db
+      .select()
+      .from(companyReferrals)
+      .where(and(
+        eq(companyReferrals.companyId, companyId),
+        eq(companyReferrals.status, "pending")
+      ))
+      .limit(1);
+
+    if (referral.length === 0) {
+      console.log("   ℹ️ Nenhuma indicação pendente para esta empresa");
+      return { updated: false, reason: "Nenhuma indicação pendente" };
+    }
+
+    const currentReferral = referral[0];
+
+    // Contar TODAS as entregas completadas pela empresa
+    const completedDeliveries = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(requests)
+      .where(and(
+        eq(requests.companyId, companyId),
+        eq(requests.isCompleted, true)
+      ));
+
+    const totalCompletedDeliveries = completedDeliveries[0]?.count || 0;
+    console.log(`   📊 Total de entregas completadas: ${totalCompletedDeliveries}/${currentReferral.requiredDeliveries}`);
+
+    // Verificar se atingiu a meta
+    if (totalCompletedDeliveries >= currentReferral.requiredDeliveries) {
+      console.log("   🎉 Meta atingida! Marcando como qualified");
+
+      await db
+        .update(companyReferrals)
+        .set({
+          status: "qualified",
+          completedDeliveries: totalCompletedDeliveries,
+          qualifiedAt: new Date(),
+          updatedAt: new Date()
+        })
+        .where(eq(companyReferrals.id, currentReferral.id));
+
+      return {
+        updated: true,
+        qualified: true,
+        commission: currentReferral.commissionAmount,
+        referrerDriverId: currentReferral.referrerDriverId,
+        completedDeliveries: totalCompletedDeliveries
+      };
+    }
+
+    // Atualizar apenas o contador
+    await db
+      .update(companyReferrals)
+      .set({
+        completedDeliveries: totalCompletedDeliveries,
+        updatedAt: new Date()
+      })
+      .where(eq(companyReferrals.id, currentReferral.id));
+
+    console.log(`   ✅ Contador atualizado. Faltam ${currentReferral.requiredDeliveries - totalCompletedDeliveries} entregas`);
+
+    return {
+      updated: true,
+      qualified: false,
+      completedDeliveries: totalCompletedDeliveries,
+      remaining: currentReferral.requiredDeliveries - totalCompletedDeliveries
+    };
+
+  } catch (error) {
+    console.error("Erro ao atualizar progresso de indicação de empresa:", error);
     return { updated: false, reason: "Erro ao atualizar progresso", error };
   }
 }

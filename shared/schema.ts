@@ -185,6 +185,9 @@ export const companies = pgTable("companies", {
   ratingTotal: varchar("rating_total", { length: 10 }).default("0"), // Soma total dos pontos
   noOfRatings: integer("no_of_ratings").default(0), // Número de avaliações
 
+  // Indicação
+  referredByDriverId: varchar("referred_by_driver_id").references(() => drivers.id), // Motorista que indicou a empresa
+
   password: varchar("password", { length: 255 }),
 
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -1146,10 +1149,14 @@ export type InsertFaq = z.infer<typeof insertFaqSchema>;
 export const referralSettings = pgTable("referral_settings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
 
-  // Configurações
+  // Configurações para Motoristas
   minimumDeliveries: integer("minimum_deliveries").notNull().default(10), // Mínimo de corridas para ganhar comissão
   commissionAmount: numeric("commission_amount", { precision: 10, scale: 2 }).notNull().default("50.00"), // Valor da comissão
   enabled: boolean("enabled").notNull().default(true), // Sistema habilitado ou não
+
+  // Configurações para Empresas
+  companyMinimumDeliveries: integer("company_minimum_deliveries").notNull().default(20), // Mínimo de entregas para empresa ganhar comissão
+  companyCommissionAmount: numeric("company_commission_amount", { precision: 10, scale: 2 }).notNull().default("100.00"), // Valor da comissão por empresa
 
   // Rastreamento
   updatedBy: varchar("updated_by").references(() => users.id),
@@ -1162,6 +1169,8 @@ export const insertReferralSettingsSchema = createInsertSchema(referralSettings,
   minimumDeliveries: z.number().int().min(1, "Mínimo de entregas deve ser maior que 0"),
   commissionAmount: z.union([z.string(), z.number()]).transform(val => String(val)),
   enabled: z.boolean().default(true),
+  companyMinimumDeliveries: z.number().int().min(1, "Mínimo de entregas da empresa deve ser maior que 0"),
+  companyCommissionAmount: z.union([z.string(), z.number()]).transform(val => String(val)),
 }).omit({
   id: true,
   updatedBy: true,
@@ -1254,6 +1263,46 @@ export const insertDriverReferralSchema = createInsertSchema(driverReferrals, {
 
 export type DriverReferral = typeof driverReferrals.$inferSelect;
 export type InsertDriverReferral = z.infer<typeof insertDriverReferralSchema>;
+
+// ========================================
+// COMPANY REFERRALS (Indicações de Empresas pelo Motorista)
+// ========================================
+export const companyReferrals = pgTable("company_referrals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Relacionamentos
+  referrerDriverId: varchar("referrer_driver_id").notNull().references(() => drivers.id), // Motorista que indicou
+  companyId: varchar("company_id").notNull().references(() => companies.id), // Empresa indicada
+
+  // Detalhes da Comissão
+  requiredDeliveries: integer("required_deliveries").notNull(), // Meta de entregas na hora da indicação
+  completedDeliveries: integer("completed_deliveries").notNull().default(0), // Entregas completadas pela empresa
+  commissionAmount: numeric("commission_amount", { precision: 10, scale: 2 }).notNull(), // Valor da comissão
+
+  // Status
+  status: varchar("status", { length: 20 }).notNull().default("pending"), // pending, qualified, paid
+  qualifiedAt: timestamp("qualified_at"), // Quando atingiu a meta
+  paidAt: timestamp("paid_at"), // Quando foi paga
+
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertCompanyReferralSchema = createInsertSchema(companyReferrals, {
+  referrerDriverId: z.string().min(1, "Motorista indicador é obrigatório"),
+  companyId: z.string().min(1, "Empresa é obrigatória"),
+  requiredDeliveries: z.number().int().min(1, "Meta de entregas deve ser maior que 0"),
+  completedDeliveries: z.number().int().min(0).default(0),
+  commissionAmount: z.union([z.string(), z.number()]).transform(val => String(val)),
+  status: z.enum(["pending", "qualified", "paid"]).default("pending"),
+}).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type CompanyReferral = typeof companyReferrals.$inferSelect;
+export type InsertCompanyReferral = z.infer<typeof insertCompanyReferralSchema>;
 
 // ========================================
 // TICKET SUBJECTS (Assuntos de Tickets)
